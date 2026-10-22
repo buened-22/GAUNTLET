@@ -1,0 +1,20 @@
+# PostgreSQL 16 for Gauntlet integration runs.
+# NOTE: this file could not be tested on the development machine (Docker was
+# not installed there); the no-Docker path is `python -m gauntlet pg install|init|start`.
+# The service listens on the same port and credentials as the local cluster,
+# so GAUNTLET_PG_DSN's default works with either.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: gauntlet
+      POSTGRES_PASSWORD: gauntlet
+      POSTGRES_DB: postgres
+    command: ["postgres", "-c", "max_connections=200"]
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gauntlet"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

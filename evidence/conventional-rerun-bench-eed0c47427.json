@@ -1,0 +1,742 @@
+{
+ "purpose": "supplementary conventional re-run after the reporting fix; does NOT replace bench-eed0c47427's recorded results",
+ "benchmark_version": "0.3.0",
+ "started_at": "2026-10-19T07:17:38.244690+00:00",
+ "environment": {
+  "python": "3.14.0",
+  "platform": "Windows-11-10.0.26300-SP0"
+ },
+ "suites": {
+  "ref_a_trigger": {
+   "impl_id": "ref_a_trigger",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 10,
+    "fail": 0,
+    "infra_error": 0
+   },
+   "all_passed": true,
+   "started_at": "2026-10-19T07:18:37.224723+00:00",
+   "duration_s": 58.8
+  },
+  "ref_b_dualwrite": {
+   "impl_id": "ref_b_dualwrite",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 10,
+    "fail": 0,
+    "infra_error": 0
+   },
+   "all_passed": true,
+   "started_at": "2026-10-19T07:20:04.956071+00:00",
+   "duration_s": 87.7
+  },
+  "m1_stale_backfill": {
+   "impl_id": "m1_stale_backfill",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 10,
+    "fail": 0,
+    "infra_error": 0
+   },
+   "all_passed": true,
+   "started_at": "2026-10-19T07:21:19.995542+00:00",
+   "duration_s": 75.0
+  },
+  "m2_nonatomic_dual_write": {
+   "impl_id": "m2_nonatomic_dual_write",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 10,
+    "fail": 0,
+    "infra_error": 0
+   },
+   "all_passed": true,
+   "started_at": "2026-10-19T07:22:54.791187+00:00",
+   "duration_s": 94.8
+  },
+  "m3_retry_duplicates": {
+   "impl_id": "m3_retry_duplicates",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 10,
+    "fail": 0,
+    "infra_error": 0
+   },
+   "all_passed": true,
+   "started_at": "2026-10-19T07:23:52.166480+00:00",
+   "duration_s": 57.4
+  },
+  "m4_premature_contract": {
+   "impl_id": "m4_premature_contract",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "fail",
+     "message": "expected an error, got {'status': 'ok', 'result': {'noop': False, 'stage': 'finalized'}}"
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 9,
+    "fail": 1,
+    "infra_error": 0
+   },
+   "all_passed": false,
+   "started_at": "2026-10-19T07:25:21.420574+00:00",
+   "duration_s": 89.3
+  },
+  "m5_backfill_skips_row": {
+   "impl_id": "m5_backfill_skips_row",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "fail",
+     "message": "expected success, got {'status': 'error', 'error': {'kind': 'app', 'code': 'migration_refused', 'message': '2 row(s) with NULL total_cents'}}"
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 9,
+    "fail": 1,
+    "infra_error": 0
+   },
+   "all_passed": false,
+   "started_at": "2026-10-19T07:26:26.549876+00:00",
+   "duration_s": 65.1
+  },
+  "m6_float_cents": {
+   "impl_id": "m6_float_cents",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "fail",
+     "message": "v2 create read-back: expected '19.99', got '19.98'"
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 9,
+    "fail": 1,
+    "infra_error": 0
+   },
+   "all_passed": false,
+   "started_at": "2026-10-19T07:27:32.465119+00:00",
+   "duration_s": 65.9
+  },
+  "m7_assumes_backfilled": {
+   "impl_id": "m7_assumes_backfilled",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 10,
+    "fail": 0,
+    "infra_error": 0
+   },
+   "all_passed": true,
+   "started_at": "2026-10-19T07:28:49.468581+00:00",
+   "duration_s": 77.0
+  },
+  "m8_skip_reconcile": {
+   "impl_id": "m8_skip_reconcile",
+   "tests": [
+    {
+     "id": "CT01",
+     "title": "v1 create then read returns the same total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT02",
+     "title": "v1 add_charge returns and persists the new total",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT03",
+     "title": "v1 add_charge with a repeated key is applied once",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT04",
+     "title": "unknown orders are reported as not_found",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT05",
+     "title": "after expand, v2 reads legacy rows correctly",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT06",
+     "title": "v2 create / set_total / add_charge / read",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT07",
+     "title": "full sequential migration preserves every value",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT08",
+     "title": "finalize is refused while a v1 instance is registered",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT09",
+     "title": "v2 operates normally after contract",
+     "status": "pass",
+     "message": ""
+    },
+    {
+     "id": "CT10",
+     "title": "invalid amounts are rejected without side effects",
+     "status": "pass",
+     "message": ""
+    }
+   ],
+   "counts": {
+    "pass": 10,
+    "fail": 0,
+    "infra_error": 0
+   },
+   "all_passed": true,
+   "started_at": "2026-10-19T07:29:52.058105+00:00",
+   "duration_s": 62.6
+  }
+ },
+ "finished_at": "2026-10-19T07:29:52.058266+00:00"
+}

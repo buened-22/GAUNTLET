@@ -1,0 +1,15 @@
+.venv/
+.gauntlet/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# secrets and OS/OneDrive clutter
+.env
+.env.*
+Thumbs.db
+desktop.ini
+.DS_Store

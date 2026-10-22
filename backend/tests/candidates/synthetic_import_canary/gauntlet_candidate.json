@@ -1,0 +1,8 @@
+{
+  "contract_version": "1",
+  "name": "synthetic-import-canary",
+  "entry": {"module": "candidate", "class": "Implementation"},
+  "strategy": "A",
+  "description": "Synthetic test fixture: records when its module is imported, so tests can prove a blocked path never loads candidate code.",
+  "producer": {"kind": "synthetic_fixture", "note": "test instrumentation; not AI-generated"}
+}

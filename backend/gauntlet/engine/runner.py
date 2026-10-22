@@ -1,0 +1,262 @@
+"""End-to-end execution of one benchmark run.
+
+    scenario.build(seed) -> fresh PG database with the P0 schema -> controller
+    executes the directives -> settle -> final snapshot -> independent oracle
+    -> hashes -> result dict (persisted by the caller).
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import platform
+import sys
+import threading
+import time
+import traceback
+import uuid
+from datetime import datetime, timezone
+
+import psycopg
+
+from gauntlet import BENCHMARK_VERSION
+from gauntlet.config import PG_ADMIN_DSN
+from gauntlet.actor.proxy import ActorFailure, ProcessPool
+from gauntlet.engine.controller import Controller, RunLimitExceeded, RunTimeout, ScheduleError
+from gauntlet.impls.registry import get_info
+from gauntlet.oracle.checker import RunOracle, infra_results, verdict
+from gauntlet.pg.provision import (
+    InfrastructureError, apply_legacy_schema, check_server, create_candidate_role, create_run_database,
+    drop_candidate_role, drop_run_database,
+)
+from gauntlet.scenarios.catalog import SCENARIOS, get_scenario
+
+# Trace fields that are observational (timing, OS identifiers) and therefore
+# excluded from the logical-trace hash.
+_NON_LOGICAL = {"t_ms", "blockers", "backend_pid"}
+
+
+def canonical_hash(obj) -> str:
+    return hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+def schedule_definition(scenario_id: str, seed: int) -> dict:
+    """The schedule a catalog (or fixture) scenario defines for a seed."""
+    if scenario_id in SCENARIOS:
+        sc = get_scenario(scenario_id)
+    else:
+        from gauntlet.schedules import resolve_scenario
+        sc = resolve_scenario(scenario_id)
+    built = sc.build(seed)
+    return {"benchmark_version": BENCHMARK_VERSION, "scenario_id": scenario_id, "seed": seed,
+            "initial_orders": {str(k): v for k, v in sorted(built["initial_orders"].items())},
+            "directives": built["directives"], "ops": built["ops"]}
+
+
+def logical_trace(events: list[dict]) -> list[dict]:
+    return [{k: v for k, v in e.items() if k not in _NON_LOGICAL} for e in events]
+
+
+def execute_run(scenario_id: str, impl_id: str, seed: int, admin_dsn: str = PG_ADMIN_DSN,
+                keep_database: bool = False, *, schedule: dict | None = None, origin: dict | None = None,
+                time_limit_s: float | None = None, max_events: int | None = None,
+                isolation: dict | None = None) -> dict:
+    """Execute one run on a fresh database and judge it with the independent oracle.
+
+    Without ``schedule`` the scenario's own schedule for ``seed`` is executed (catalog behaviour,
+    unchanged). With ``schedule`` (an explicit schedule document, see ``gauntlet.schedules``) that
+    document is validated and executed instead; ``scenario_id``/``seed`` must match it.
+    ``time_limit_s`` and ``max_events`` are enforced during execution; exceeding them ends the run as
+    an infrastructure error (``timeout`` / ``limit_exceeded``), never as a pass.
+
+    External candidates (``ext:<candidate_id>``) additionally run with: snapshot verification, the
+    isolation check of ``isolation`` (fail closed), a harness-wide execution slot, sandboxed actor
+    processes and a restricted per-run database role. A failure of the candidate's own actor process
+    (crash, protocol violation, load failure) is classified ``candidate_execution_failure``; the run is
+    never judged and never a pass.
+    """
+    from gauntlet.candidates import is_external
+    from gauntlet.schedules import provenance, resolve_scenario, validate_schedule
+    info = get_info(impl_id)
+    schedule_problems: list[str] = []
+    if schedule is None:
+        scenario = resolve_scenario(scenario_id)
+        schedule = schedule_definition(scenario_id, seed)
+        source = "catalog" if scenario_id in SCENARIOS else "fixture"
+    else:
+        if schedule.get("scenario_id") != scenario_id or schedule.get("seed") != seed:
+            raise ValueError("explicit schedule does not match scenario_id/seed")
+        scenario = resolve_scenario(scenario_id)
+        schedule = copy.deepcopy(schedule)
+        source = schedule.get("source", "explicit")
+        schedule_problems = validate_schedule(schedule)
+    run = {
+        "id": uuid.uuid4().hex[:16],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "benchmark_version": BENCHMARK_VERSION,
+        "scenario_id": scenario_id, "impl_id": impl_id, "impl_kind": info.kind, "strategy": info.strategy,
+        "seed": seed,
+        "config": {"scenario_id": scenario_id, "impl_id": impl_id, "seed": seed,
+                   "benchmark_version": BENCHMARK_VERSION},
+        "schedule": schedule,
+        "schedule_hash": canonical_hash(schedule),
+        "environment": {"python": sys.version.split()[0], "platform": platform.platform()},
+        "initial_state": schedule["initial_orders"],
+        "events": [], "ledger": [], "attempts": [], "snapshots": [], "repeats": [],
+        "invariants": [], "infra_error": None, "inconclusive": [], "notes": [],
+        "schedule_source": source, "origin": origin, "provenance": provenance(impl_id, schedule),
+        "limits": {"time_limit_s": time_limit_s, "max_events": max_events},
+        "error_class": None, "decisions": {}, "database": None,
+    }
+    external = is_external(impl_id)
+    t0 = time.perf_counter()
+    db = None
+    ctl = None
+    pool = None
+    slot = None
+    cand_role = None
+    actor_dsn = None
+    iso_cfg = None
+    try:
+        if schedule_problems:
+            raise ScheduleError("invalid schedule: " + "; ".join(schedule_problems[:10]))
+        if external:
+            from gauntlet.candidates import candidate_id_of
+            from gauntlet.candidates.sandbox import IsolationConfig, check, run_slot
+            from gauntlet.candidates.snapshots import verify
+            meta = verify(candidate_id_of(impl_id))  # CandidateError if the snapshot changed
+            run["candidate"] = {k: meta[k] for k in ("candidate_id", "source_hash", "contract_version", "loader_version")}
+            iso_cfg = IsolationConfig.from_dict(isolation)
+            run["isolation"] = check(iso_cfg)  # IsolationUnavailable: fail closed, nothing executes
+            slot = run_slot()
+        server = check_server(admin_dsn)
+        # Start every actor process this schedule will need, in parallel.
+        pool = ProcessPool(sum(1 for d in schedule["directives"] if d["kind"] in ("spawn", "restart")),
+                           sandbox=iso_cfg)
+        run["environment"]["postgres"] = server["server_version"]
+        if not server["is_pg16"]:
+            run["notes"].append(f"server is not PostgreSQL 16 ({server['server_version']})")
+        db = create_run_database(admin_dsn)
+        run["database"] = db.name
+        actor_dsn = db.dsn
+        if external:
+            cand_role, role_db = create_candidate_role(db, admin_dsn)
+            actor_dsn = role_db.dsn
+            run["database_role"] = {"name": cand_role, "superuser": False, "owns": "its run database only"}
+        apply_legacy_schema(actor_dsn, {int(k): v for k, v in schedule["initial_orders"].items()})
+        with psycopg.connect(db.dsn, autocommit=True, application_name="gauntlet:monitor") as monitor:
+            remaining = time_limit_s - (time.perf_counter() - t0) if time_limit_s else None
+            deadline = time.monotonic() + remaining if remaining is not None else None
+            ctl = Controller(impl_id, actor_dsn, monitor, copy.deepcopy(schedule["ops"]), pool,
+                             deadline=deadline, max_events=max_events)
+            # The deadline is checked at every engine step; the watchdog additionally kills the actors
+            # if a single wait outlasts it, so a stuck step cannot hold the run indefinitely.
+            watchdog = threading.Timer(max(remaining, 0), ctl.abort) if remaining is not None else None
+            if watchdog:
+                watchdog.daemon = True
+                watchdog.start()
+            try:
+                ctl.execute(schedule["directives"])
+                ctl.settle()
+            finally:
+                if watchdog:
+                    watchdog.cancel()
+                ctl.shutdown()
+    except InfrastructureError as exc:
+        run["infra_error"] = str(exc)
+        timed_out = time_limit_s is not None and (time.perf_counter() - t0) > time_limit_s
+        if timed_out and not isinstance(exc, RunTimeout):
+            run["infra_error"] = f"run exceeded its wall-clock limit of {time_limit_s}s ({exc})"
+        run["error_class"] = ("timeout" if isinstance(exc, RunTimeout) or timed_out else
+                              "limit_exceeded" if isinstance(exc, RunLimitExceeded) else
+                              "schedule_error" if isinstance(exc, ScheduleError) or str(exc).startswith("schedule error")
+                              else "candidate_execution_failure" if external and isinstance(exc, ActorFailure) and exc.loaded
+                              else "infrastructure")
+    except Exception as exc:  # harness bug (or a candidate admission failure): never report as pass
+        admission = _candidate_admission_error(exc) if external else None
+        if admission:
+            run["infra_error"], run["error_class"] = admission
+        else:
+            run["infra_error"] = f"harness exception: {type(exc).__name__}: {exc}"
+            run["error_class"] = "harness_exception"
+            if time_limit_s is not None and (time.perf_counter() - t0) > time_limit_s:
+                run["infra_error"] = f"run exceeded its wall-clock limit of {time_limit_s}s ({run['infra_error']})"
+                run["error_class"] = "timeout"
+            run["notes"].append(traceback.format_exc(limit=8))
+    finally:
+        if pool is not None:
+            pool.close()
+        if db is not None and not keep_database:
+            drop_run_database(db, admin_dsn)
+        if cand_role is not None and not keep_database and not drop_candidate_role(cand_role, admin_dsn):
+            run["notes"].append(f"candidate database role {cand_role} could not be removed")
+        if slot is not None:
+            slot.release()
+    run["duration_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+    if ctl is not None:
+        run["events"] = ctl.events
+        run["ledger"] = ctl.ledger.records()
+        run["attempts"] = ctl.ledger.attempts()
+        run["snapshots"] = ctl.snapshots
+        run["repeats"] = ctl.repeats
+        run["inconclusive"] = ctl.inconclusive
+        run["notes"] += ctl.notes
+        run["decisions"] = {str(k): v for k, v in ctl.decisions.items()}
+        if external:  # what each sandboxed actor wrote to stderr (bounded capture; the rest is counted only)
+            run["actor_output"] = {name: {"stderr_bytes": p.child.stderr_bytes, "truncated": p.child.stderr_truncated,
+                                          "tail": p.child.stderr_tail[-5:]}
+                                   for name, p in ctl.actors.items() if p.child is not None}
+
+    if run["infra_error"]:
+        run["invariants"] = infra_results(run["infra_error"])
+    else:
+        oracle = RunOracle(strategy=info.strategy, initial_orders=schedule["initial_orders"],
+                           attempts=run["attempts"], snapshots=run["snapshots"], repeats=run["repeats"],
+                           target_stage=scenario.target_stage, inconclusive=run["inconclusive"])
+        run["invariants"] = oracle.evaluate()
+    run["verdict"] = verdict(run["invariants"], run["infra_error"], run["inconclusive"])
+    run["trace_hash"] = canonical_hash(logical_trace(run["events"])) if run["events"] else None
+    run["outcome_hash"] = canonical_hash({
+        "attempts": [{k: a[k] for k in ("attempt_id", "status", "reason", "result", "error")}
+                     for a in run["attempts"]],
+        "invariants": [(r["id"], r["status"]) for r in run["invariants"]],
+        "final": run["snapshots"][-1]["rows"] if run["snapshots"] else None,
+    })
+    run["metrics"] = summarize(run)
+    return run
+
+
+def _candidate_admission_error(exc: Exception) -> tuple[str, str] | None:
+    """Errors that stop an external candidate before it executes (fail closed)."""
+    from gauntlet.candidates.sandbox import IsolationConfigError, IsolationUnavailable
+    from gauntlet.candidates.snapshots import CandidateError
+    if isinstance(exc, IsolationUnavailable):
+        return str(exc), "isolation_unavailable"
+    if isinstance(exc, IsolationConfigError):
+        return f"invalid isolation configuration: {exc}", "isolation_unavailable"
+    if isinstance(exc, CandidateError):
+        return str(exc), "candidate_rejected"
+    return None
+
+
+def summarize(run: dict) -> dict:
+    atts = run["attempts"]
+    ev = run["events"]
+    count = lambda pred: sum(1 for x in atts if pred(x))  # noqa: E731
+    return {
+        "events": len(ev),
+        "statements": sum(1 for e in ev if e["kind"] in ("stmt", "unblocked")),
+        "attempts": len(atts),
+        "acknowledged": count(lambda a: a["status"] == "ok"),
+        "failed": count(lambda a: a["status"] == "failed"),
+        "uncertain": count(lambda a: a["status"] in ("uncertain", "open")),
+        "faults_injected": sum(1 for e in ev if e.get("fault")),
+        "crashes": sum(1 for e in ev if e["kind"] == "crash"),
+        "lock_waits": sum(1 for e in ev if e["kind"] == "blocked"),
+        "recoveries": sum(1 for e in ev if e.get("recovery") or (e["kind"] == "invoke" and e.get("retry"))),
+        "snapshots": len(run["snapshots"]),
+        "invariants": {s: sum(1 for r in run["invariants"] if r["status"] == s)
+                       for s in ("pass", "fail", "inconclusive", "not_applicable", "infra_error")},
+    }

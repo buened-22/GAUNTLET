@@ -1,0 +1,14 @@
+{
+  "contract_version": "1",
+  "name": "synthetic-ref-a-copy",
+  "entry": {
+    "module": "candidate",
+    "class": "Implementation"
+  },
+  "strategy": "A",
+  "description": "Synthetic fixture: adapted copy of reference A (expected correct).",
+  "producer": {
+    "kind": "synthetic_fixture",
+    "note": "manually adapted from reference A; not AI-generated"
+  }
+}

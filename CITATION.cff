@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: >-
+  If you use GAUNTLET, please cite it as below. GAUNTLET is a research prototype; its results concern
+  hand-written reference implementations, mutants and synthetic fixtures only (no AI coding agent has
+  been evaluated) and have not been independently reproduced.
+type: software
+title: "GAUNTLET: adversarial evaluation of database-migration code under concurrency, partial failure and retries"
+version: "0.4.0"
+license: Apache-2.0
+authors:
+  - family-names: Tantipudi
+    given-names: Snigdha
+abstract: >-
+  GAUNTLET is a research instrument that tests whether online schema-migration code that passes
+  conventional functional tests stays correct under adversarial execution: statement-level interleavings
+  of concurrent legacy and new application versions, process crashes, lost responses, retries and
+  repeated or resumed migration steps. A controller gates every SQL statement of every actor process, so
+  schedules are exact and replayable, and an oracle independent of the implementation judges each run from
+  the client-visible ledger and raw database snapshots. It includes differential testing, bounded schedule
+  exploration, failure minimization and experiment reports with hashed evidence manifests.
+keywords:
+  - database migration
+  - schema migration
+  - concurrency testing
+  - fault injection
+  - linearizability
+  - AI coding agents
+  - evaluation
