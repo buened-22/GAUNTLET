@@ -116,8 +116,48 @@ def create_candidate_role(db: RunDatabase, admin_dsn: str = PG_ADMIN_DSN) -> tup
     return role, RunDatabase(name=db.name, dsn=conninfo.make_conninfo(**params))
 
 
+def create_observer_role(db: RunDatabase, admin_dsn: str = PG_ADMIN_DSN) -> tuple[str, RunDatabase]:
+    """A per-run login role for the harness's snapshot reads of an external candidate's run database (audit
+    finding A-02): not a superuser, no CREATEDB / CREATEROLE / REPLICATION / BYPASSRLS, member of no role, and
+    CONNECT on this run database only (no TEMPORARY). Its read privileges on the tables are granted by the
+    candidate role itself (:func:`grant_observer_read`), so no superuser session opens in the run database.
+    Returns (role name, connection info as that role)."""
+    from psycopg import sql
+    role = "gauntlet_obs_" + db.name.rsplit("_", 1)[-1]
+    password = secrets.token_hex(24)
+    try:
+        with psycopg.connect(admin_dsn, autocommit=True, connect_timeout=5) as conn:
+            conn.execute(f"SET statement_timeout = {DDL_STATEMENT_TIMEOUT_MS}")
+            conn.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION "
+                                 "NOBYPASSRLS NOINHERIT CONNECTION LIMIT 2").format(sql.Identifier(role),
+                                                                                    sql.Literal(password)))
+            conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(db.name),
+                                                                              sql.Identifier(role)))
+    except psycopg.Error as exc:
+        raise InfrastructureError(f"could not create the observer database role: {exc}") from exc
+    params = conninfo.conninfo_to_dict(admin_dsn)
+    params.update(dbname=db.name, user=role, password=password)
+    return role, RunDatabase(name=db.name, dsn=conninfo.make_conninfo(**params))
+
+
+def grant_observer_read(candidate_dsn: str, observer_role: str) -> None:
+    """As the candidate role (owner of the run database, its ``public`` schema and the P0 tables), before any
+    candidate code runs: let the observer read the schema and its tables, including tables created later."""
+    from psycopg import sql
+    obs = sql.Identifier(observer_role)
+    try:
+        with psycopg.connect(candidate_dsn, autocommit=True, connect_timeout=5) as conn:
+            conn.execute(f"SET statement_timeout = {DDL_STATEMENT_TIMEOUT_MS}")
+            conn.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(obs))
+            conn.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA public TO {}").format(obs))
+            conn.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {}").format(obs))
+    except psycopg.Error as exc:
+        raise InfrastructureError(f"could not grant the observer read access: {exc}") from exc
+
+
 def drop_candidate_role(role: str, admin_dsn: str = PG_ADMIN_DSN) -> bool:
-    """Best effort (after the run database is dropped). Returns False if the role could not be removed."""
+    """Best effort (after the run database is dropped). Returns False if the role could not be removed.
+    Also used for the per-run observer role."""
     from psycopg import sql
     try:
         with psycopg.connect(admin_dsn, autocommit=True, connect_timeout=5) as conn:

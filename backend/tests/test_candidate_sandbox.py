@@ -66,6 +66,45 @@ def test_process_mode_record_states_it_is_not_a_security_boundary():
     assert any("read isolation" in x for x in rec["not_enforced"]) and any("network" in x for x in rec["not_enforced"])
 
 
+def test_process_mode_record_lists_the_audit_controls_and_their_limits():
+    """The isolation record (rendered as "Applied" / "Not enforced" in every candidate evaluation summary) names
+    the A-01 and A-02 controls and the gaps they leave, and each claimed control exists in the implementation.
+    End-to-end enforcement is tested in test_audit_hardening_pg.py (A-01) and test_observer_role_pg.py (A-02)."""
+    import ast
+    from gauntlet.candidates import guard
+    from gauntlet.engine import runner
+    from gauntlet.pg import provision
+
+    rec = check(IsolationConfig(trusted_environment=True))
+    controls, gaps = " | ".join(rec["controls"]), " | ".join(rec["not_enforced"])
+    # A-01: the actor has no database access; the harness executes one granted statement at a time
+    assert "harness-owned database connection (A-01)" in controls and "is given no connection, DSN or credentials" in controls
+    child = (Path(BACKEND) / "gauntlet" / "actor" / "child.py").read_text(encoding="utf-8")
+    imported = {a.name.split(".")[0] for n in ast.walk(ast.parse(child)) if isinstance(n, ast.Import) for a in n.names}
+    imported |= {(n.module or "").split(".")[0] for n in ast.walk(ast.parse(child)) if isinstance(n, ast.ImportFrom)}
+    assert "psycopg" not in imported, "the actor process must not import the database driver"
+    # the guard claim, including the database driver, matches the guard's deny list, and the record says the
+    # guard is not a control (plain Python can switch it off; audit finding F-02)
+    assert "tripwire for trusted code, not a control" in controls and "plain Python can switch it off" in controls
+    assert "no database-driver imports" in controls and "Python level only" not in controls
+    assert {"psycopg", "psycopg2"} <= set(guard._DENY_IMPORTS)
+    # A-02: non-superuser observer, control connection outside the run database
+    assert "non-superuser observer role (A-02)" in controls and "no superuser session in the run database" in controls
+    assert "admin-role connection" in controls and "never to the run database" in controls  # privileged, stated
+    assert callable(runner.open_observer) and callable(runner.open_control)
+    import inspect
+    role_sql = inspect.getsource(provision.create_observer_role)
+    assert all(attr in role_sql for attr in ("NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOBYPASSRLS", "NOINHERIT"))
+    # the limits these controls leave are stated, not hidden
+    assert "environment and memory" in gaps and "new database connection opened by candidate code" in gaps
+    assert "disabling the audit-hook guard (plain Python suffices)" in gaps
+    assert "native code defeating" not in gaps  # the old wording implied only native code could bypass it
+    # nothing in the record claims a boundary or an available strict mode
+    assert rec["security_boundary"] is False
+    assert not any("security boundary" in c.lower() or "container" in c.lower() or "strict" in c.lower()
+                   for c in rec["controls"])
+
+
 def test_environment_is_allow_listed(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
     monkeypatch.setenv("GAUNTLET_PG_DSN", "postgresql://u:p@h/db")
@@ -140,6 +179,67 @@ def test_guard_denies_processes_sockets_ffi_and_deletion(code, event):
     rc, out, err, _ = run_in_sandbox(code, guard=True)
     assert rc != 0 and "gauntlet sandbox:" in err and event in err, err
     assert REPO_FILE.exists()
+
+
+# -- audit finding F-02: what the guard is, and what it is not --------------------------------------------
+# The guard is documented as a tripwire for trusted code, NOT a security control: plain Python can switch most
+# of it off. These tests pin that documented behaviour. If the guard is ever hardened so that they fail, the
+# documentation (SECURITY.md, docs/SECURITY_MODEL.md, guard.py, the isolation record) must be updated with them.
+REBIND_GUARD = ("import sys\n"
+                "g = sys.modules['gauntlet.candidates.guard']\n"
+                "g._DENY = (); g._DENY_IMPORTS = (); g._PATH_EVENTS = {}; g._WRITE_FLAGS = 0\n")
+
+
+def test_plain_python_can_switch_the_guard_off(tmp_path):
+    """With the guard intact a socket import and a write outside the workspace are denied; after three lines of
+    ordinary Python (no native code) the same actor connects to a loopback listener, creates a file outside its
+    workspace and imports ctypes. This is why the guard is not a security control."""
+    import socket
+    import threading
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    accepted = []
+    threading.Thread(target=lambda: accepted.append(listener.accept()[0]), daemon=True).start()
+    outside = tmp_path / "written-outside-the-workspace.txt"
+    try:
+        rc, out, err, _ = run_in_sandbox("import socket", guard=True)
+        assert rc != 0 and "import denied socket" in err, err
+        rc, out, err, _ = run_in_sandbox(f"import os; os.close(os.open({str(outside)!r}, os.O_WRONLY | os.O_CREAT))",
+                                         guard=True)
+        assert rc != 0 and "write denied" in err and not outside.exists(), err
+        code = (REBIND_GUARD +
+                f"import socket; s = socket.create_connection(('127.0.0.1', {port}), timeout=10); s.close()\n"
+                f"import os; os.close(os.open({str(outside)!r}, os.O_WRONLY | os.O_CREAT))\n"
+                "import ctypes\nprint('GUARD-OFF')")
+        rc, out, err, _ = run_in_sandbox(code, guard=True)
+        assert rc == 0 and "GUARD-OFF" in out, err
+        assert outside.exists() and accepted, "the actor wrote outside its workspace and reached the listener"
+    finally:
+        listener.close()
+        for s in accepted:
+            s.close()
+
+
+def test_the_mode_check_for_open_is_not_rebindable():
+    """Precision about the bypass: open(path, 'w') outside the workspace stays denied after rebinding, because
+    the hook checks the mode string itself rather than a module global. (os.open, above, is not.)"""
+    rc, out, err, _ = run_in_sandbox(REBIND_GUARD + f"open({str(REPO_FILE)!r}, 'a').write('x')", guard=True)
+    assert rc != 0 and "write denied" in err, err
+
+
+@pytest.mark.skipif(not WIN, reason="job object limits are Windows-specific (POSIX path untested here)")
+def test_os_level_limits_still_hold_after_the_guard_is_switched_off():
+    """What does hold against a candidate that has switched the guard off: the operating-system limits."""
+    code = (REBIND_GUARD + "import subprocess, sys\n"
+            "try:\n    subprocess.run([sys.executable, '-c', 'pass'], timeout=20)\n    print('SPAWNED')\n"
+            "except OSError as e:\n    print('BLOCKED', getattr(e, 'winerror', e))\n")
+    rc, out, err, _ = run_in_sandbox(code, guard=True)
+    assert "BLOCKED" in out and "SPAWNED" not in out, (out, err)
+    rc, out, err, _ = run_in_sandbox(REBIND_GUARD + "b = bytearray(300 * 1024 * 1024)\nprint('ALLOCATED')",
+                                     IsolationConfig(memory_mb=150), guard=True)
+    assert "ALLOCATED" not in out and ("MemoryError" in err or rc != 0), (out, err)
 
 
 def test_interpreter_is_a_single_process():

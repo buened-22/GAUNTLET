@@ -157,12 +157,31 @@ def test_symlink_and_junction_escapes_are_rejected(cand, tmp_path):
     made_dir = _symlink(outside, cand / "linked_dir", directory=True)
     if made_dir:
         assert "linked_dir: directory link / junction is not allowed" in problems(cand)
-        (cand / "linked_dir").rmdir() if (cand / "linked_dir").exists() else None
+        # remove the link itself, never its target: on POSIX a directory symlink is removed with unlink
+        # (rmdir raises NotADirectoryError); on Windows a directory symlink or junction needs rmdir
+        if sys.platform.startswith("win"):
+            os.rmdir(cand / "linked_dir")
+        else:
+            (cand / "linked_dir").unlink()
+        assert (outside / "secret.py").exists(), "removing the link must not touch its target"
     made_file = _symlink(outside / "secret.py", cand / "link.py", directory=False)
     if made_file:
         assert "link.py: symbolic link / reparse point is not allowed" in problems(cand)
     if not (made_dir or made_file):
         pytest.skip("this environment can create neither symlinks nor junctions")
+
+
+def test_static_validation_does_not_detect_switching_the_guard_off(cand):
+    """Static validation is a denylist, not a sandbox (docs/SECURITY_MODEL.md): a candidate that rebinds the
+    audit-hook guard's module globals through sys.modules is accepted (audit finding F-02). Validated only;
+    the candidate is never imported or executed here."""
+    entry = cand / "candidate.py"
+    src = entry.read_text(encoding="utf-8")
+    entry.write_text("import sys\n_g = sys.modules.get('gauntlet.candidates.guard')\nif _g is not None:\n"
+                     "    _g._DENY = (); _g._DENY_IMPORTS = (); _g._PATH_EVENTS = {}; _g._WRITE_FLAGS = 0\n" + src,
+                     encoding="utf-8")
+    v = validate(cand)
+    assert v.ok, v.problems
 
 
 def test_hash_is_deterministic_and_content_sensitive(cand, tmp_path):
@@ -171,7 +190,8 @@ def test_hash_is_deterministic_and_content_sensitive(cand, tmp_path):
     crlf = tmp_path / "other-name"
     shutil.copytree(cand, crlf)
     p = crlf / "candidate.py"
-    p.write_bytes(b"\xef\xbb\xbf" + p.read_bytes().replace(b"\n", b"\r\n"))
+    # normalize first: on a CRLF checkout (git core.autocrlf=true) the fixture is already CRLF
+    p.write_bytes(b"\xef\xbb\xbf" + p.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
     os.utime(p, (1, 1))
     (crlf / "__pycache__").mkdir()
     (crlf / "__pycache__" / "candidate.cpython-314.pyc").write_bytes(b"\x00\x01")
@@ -206,7 +226,9 @@ def test_register_is_immutable_idempotent_and_verified(cand, snapshots_dir):
     assert meta2["candidate_id"] != cid and verify(cid)["source_hash"] == meta["source_hash"]
     # tampering with a stored snapshot is detected
     f = snapshot_dir(cid) / "src" / "candidate.py"
-    os.chmod(f, stat.S_IWRITE)
+    # the snapshot is read-only (0o400); the "attacker" restores owner read AND write first (S_IWRITE alone
+    # is mode 0o200 on POSIX, which also blocks the read below; on Windows chmod only clears the read-only flag)
+    os.chmod(f, stat.S_IREAD | stat.S_IWRITE)
     f.write_text(f.read_text(encoding="utf-8") + "# tampered\n", encoding="utf-8")
     with pytest.raises(CandidateError, match="modified after registration"):
         verify(cid)

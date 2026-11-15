@@ -1,13 +1,23 @@
 # GAUNTLET
 
 **Adversarial evaluation of database-migration code under concurrency, partial failure and retries.
-Research prototype. Software version 0.4.0 (proposed, untagged); benchmark version 0.3.0.**
+Research prototype. Software version 0.4.1; benchmark version 0.3.0.**
 
 > **Status, in one paragraph.** GAUNTLET is an *instrument* for testing whether migration code that passes
 > ordinary tests stays correct when execution turns adversarial. It has been validated only on
-> hand-written reference implementations, hand-written mutants and labelled synthetic fixtures. **No AI
-> coding agent has been evaluated**, and **no execution mode is a security boundary** for untrusted code.
+> hand-written reference implementations, hand-written mutants and labelled synthetic fixtures. **No study
+> of an AI coding agent has been run**: one candidate generated with Gemini has been evaluated once, inside a
+> disconnected VM, as a demonstration ([research/gemini-attempt2-results.md](research/gemini-attempt2-results.md)). **No execution mode is a security boundary** for untrusted code.
 > All validation was run by the author and has not been independently reproduced.
+
+> [!WARNING]
+> **GAUNTLET does not sandbox untrusted code.** `process` mode is a development sandbox for code you trust:
+> a candidate runs as your operating-system user, next to a harness that holds the database administrator
+> credentials, and candidate code can read your files and open network connections (plain Python is enough
+> to switch off GAUNTLET's in-process guard). `strict` (container / VM)
+> isolation is not implemented and always refuses to run. **Do not run AI-generated or otherwise untrusted
+> candidates in `process` mode on a machine you care about.** If you must evaluate such code, run GAUNTLET
+> inside a disposable VM with no network and no shared folders. See [SECURITY.md](SECURITY.md).
 
 ## The problem
 
@@ -77,13 +87,18 @@ Revalidated during the v0.4.0 release review; details and caveats in
 | Schedule exploration | Implemented, tested | One interleave directive, ≤ N preemptions (default 1); no crash-point exploration, no partial-order reduction |
 | Failure minimization | Implemented, tested | Unit deletion only; 1-minimal, not globally minimal |
 | Experiment reports with evidence manifests | Implemented, tested | Manifest stored in the same database (detects accidental change, not tampering) |
-| External-candidate pipeline | Implemented; synthetic fixtures only | `process` isolation is **not** a security boundary; `strict` isolation not implemented |
-| AI-agent evaluation | **Not done** | Requires a verified isolation boundary first |
-| Independent reproduction | **Not done** | All validation author-run on one Windows machine |
+| External-candidate pipeline | Implemented; exercised with synthetic fixtures and one AI-generated candidate | `process` isolation is **not** a security boundary; `strict` isolation not implemented |
+| AI-agent evaluation | **One demonstration run; no study** | One Gemini-generated candidate, one seed, inside a disconnected VM. A study needs a fixed protocol, many attempts and a verified isolation boundary |
+| Independent reproduction | **Not done** | All validation author-run |
 
-Supported platforms: Windows 11 (all recorded results). Linux and macOS are expected to work for trusted
-code but have **not** been verified. Python ≥ 3.11 (recorded on 3.14.0), PostgreSQL 16 (recorded on
-16.14), Node ≥ 18 for the dashboard and the portable PostgreSQL download (recorded on 24.11).
+Supported platforms: **Windows 11** is where the benchmark and every recorded result were produced. The
+full test suite and the demonstration script also pass in continuous integration on **Windows Server 2025**
+(Python 3.14, the portable PostgreSQL 16.14) and on **Ubuntu 26.04.1** (Python 3.11 and 3.14, PostgreSQL 16
+from `docker-compose.yml`). The benchmark itself has not been re-executed on Linux, so identical hashes
+there are not established. **macOS** has not been run at all. Node ≥ 18 for the dashboard and the portable
+PostgreSQL download (recorded on 24.11). On Linux the tests that check the enforcement of `process` mode's
+resource limits are skipped: those limits are applied there but **not verified**, and the process-count
+limit is not enforced.
 
 ## Quick start
 
@@ -97,7 +112,51 @@ python -m gauntlet diff --impls ref_a_trigger,m1_stale_backfill --scenario S02_b
 # -> CONFIRMED_VIOLATION  behaviour differs and the oracle FAILs: m1_stale_backfill: S7_LINEARIZABLE, S1_ACKED_DURABLE
 ```
 
+A one-command demonstration runs the same comparison, replays the failure, and shows both safety gates
+refusing to execute a candidate (about 30 s; it never executes candidate code):
+
+```bash
+bash scripts/run_demo.sh          # from the repository root; expect "checks passed: 9, failed: 0"
+```
+
+It needs `bash` (Git Bash on Windows), the virtual environment's `python` on `PATH`, a running PostgreSQL
+16 server and `sha256sum` (not part of macOS; install GNU coreutils there). It writes only to a fresh
+directory under `.gauntlet/` and exits with status 0 only if every check passed.
+
 The full walkthrough is in [docs/DEMO.md](docs/DEMO.md) and [research/demo-script.md](research/demo-script.md).
+
+## First run on AI-generated code (one attempt, not a study)
+
+On 2026-11-07 one migration generated with Gemini was evaluated once, inside a disconnected VM. Full record:
+[research/gemini-attempt2-results.md](research/gemini-attempt2-results.md).
+
+| Scenario (seed 1) | Candidate `cand-232794272c0fa534` | `ref_a_trigger` | Classification |
+|---|---|---|---|
+| S01 baseline migration | pass | pass | agreement |
+| S02 backfill vs legacy writes | pass | pass | agreement |
+| S03 lost acknowledgement and retry | pass | pass | agreement |
+| S04 crash and resume | pass | pass | agreement |
+| S05 premature finalization | **fail: `C1_COMPATIBILITY`** | pass | **confirmed violation** |
+| S06 unbackfilled records | pass | pass | agreement |
+
+In S05 the migration is asked to finalize and contract while old (v1) application instances are still
+registered. The reference refuses until they have drained. The candidate's `migrator_finalize` and
+`migrator_contract` do not check for registered v1 instances, and a later v1 request fails. The failing
+schedule was minimized from 48 to 16 directives and replayed with the same trace and outcome.
+
+How to read this, and how not to:
+
+* It is **one attempt on one seed**. It demonstrates that the pipeline works on real AI output. It is not
+  a measurement of Gemini, says nothing about how often any model makes this mistake, and supports no
+  failure rate.
+* No lost acknowledged write was found in this attempt; the other five scenarios and a bounded exploration
+  of the backfill race (15 schedules) passed. Passing those schedules does not show the code is correct.
+* Whether this candidate passes the conventional test suite was not measured.
+* The raw run records were produced inside the VM and are **not in this repository**, and neither are the
+  candidate's source files. The published values were transcribed from the VM; the SHA-256 hashes of the
+  two candidate files, of the canonical source and of the two result files are recorded so that the
+  originals can be matched to this record. Until those files are published, a reader cannot re-verify this
+  run independently, unlike the frozen benchmark in [evidence/](evidence/).
 
 ## Documentation
 
@@ -111,13 +170,22 @@ The full walkthrough is in [docs/DEMO.md](docs/DEMO.md) and [research/demo-scrip
 | [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md), [docs/DEMO.md](docs/DEMO.md) | Clean-checkout reproduction and the demonstration runbook |
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | What the prototype does not show |
 | [research/](research/) | Technical report, results summary, demo script, open questions |
-| [docs/HISTORY.md](docs/HISTORY.md) | Why this repository starts at v0.4.0; original commit identifiers of v0.1.0–v0.3.0 |
-| [docs/RELEASE_v0.4.0.md](docs/RELEASE_v0.4.0.md) | Proposed release notes and publication checklist |
+| [docs/HISTORY.md](docs/HISTORY.md) | Why this repository has one commit per release; identifiers of the unpublished development commits cited in the documentation |
+| [docs/RELEASE_v0.4.1.md](docs/RELEASE_v0.4.1.md), [docs/RELEASE_v0.4.0.md](docs/RELEASE_v0.4.0.md), [CHANGELOG.md](CHANGELOG.md) | Release notes |
+| [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md), [NOTICE](NOTICE) | Dependencies and their licences; copyright notice |
 | `docs/RESULTS-v0.3.0.md`, `docs/RESULTS-v0.2.0.md`, `docs/RESULTS.md`, `evidence/` | Frozen benchmark records (never edited) |
 
 ## Release history
 
-* **0.4.0 (proposed, this tree; not tagged; first release in this repository).** Adds differential testing, bounded schedule exploration,
+* **0.4.1 (audit hardening; first public release).** Harness-owned actor database connections (audit finding A-01: candidate
+  code no longer shares access to a database connection), a non-superuser observer role for candidate
+  databases (A-02), evidence-based classification of statement timeouts (FR-3), request-origin checks on
+  the local API, actor protocol validation, robust cleanup, a bounded monitor lock wait and more robust SQL
+  classification, with regression tests. No benchmark scenario, oracle rule, reference, mutant or recorded
+  result changed: a re-execution of the benchmark on 2026-11-12 matched the frozen v0.3.0 evidence in all 180
+  cells (`scripts/compare_benchmark.py`). See [CHANGELOG.md](CHANGELOG.md) for the list and
+  [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for what remains open.
+* **0.4.0 (tag `v0.4.0`; first release in this repository).** Adds differential testing, bounded schedule exploration,
   failure minimization, experiment reports and the external-candidate pipeline (process sandbox,
   fail-closed strict mode), plus the release documentation. No benchmark scenario, oracle rule,
   reference, mutant or recorded result changed; the benchmark version stays 0.3.0.
@@ -146,7 +214,7 @@ All three result files are generated by `python -m gauntlet bench` from recorded
 them is edited by hand. Each matrix is 10 implementations × 6 scenarios × seeds 1–3 on PostgreSQL 16.14.
 The raw databases are frozen, with SHA-256 checksums, in [evidence/](evidence/).
 
-| Metric | **v0.3.0 (current)**: `bench-eed0c47427`, [docs/RESULTS-v0.3.0.md](docs/RESULTS-v0.3.0.md) | v0.2.0 (historical): `bench-7c4395ec2b`, [docs/RESULTS-v0.2.0.md](docs/RESULTS-v0.2.0.md) | v0.1.0 (historical): `bench-f5316f9d4b`, [docs/RESULTS.md](docs/RESULTS.md) |
+| Metric | **v0.3.0 benchmark (current)**: `bench-eed0c47427`, [docs/RESULTS-v0.3.0.md](docs/RESULTS-v0.3.0.md) | v0.2.0 (historical): `bench-7c4395ec2b`, [docs/RESULTS-v0.2.0.md](docs/RESULTS-v0.2.0.md) | v0.1.0 (historical): `bench-f5316f9d4b`, [docs/RESULTS.md](docs/RESULTS.md) |
 |---|---|---|---|
 | Runs completed | 180: 121 pass, 59 fail, **0 inconclusive, 0 infrastructure errors** | 180: 121 pass, 59 fail, 0 inconclusive, 0 infrastructure errors | 180: 125 pass, 55 fail, 0 inconclusive, 0 infrastructure errors |
 | Reference implementations | `ref_a_trigger` 18/18 and `ref_b_dualwrite` 18/18 pass; 10/10 conventional tests each | same | same |
@@ -230,7 +298,8 @@ How to read the conventional rows (interpretation, not a measured quantity):
 ## Analyses and external candidates (added in 0.4.0)
 
 Four capabilities build on the same runner, oracle and results store; they change no benchmark
-scenario, oracle rule or recorded result, and no AI agent has been evaluated with them:
+scenario, oracle rule or recorded result. Beyond synthetic fixtures, they have been applied to one
+AI-generated candidate, once, as a demonstration ([research/gemini-attempt2-results.md](research/gemini-attempt2-results.md)):
 
 * **differential testing** of two or more implementations on the same schedule, with documented
   normalization and four classifications (agreement, confirmed violation, unconfirmed disagreement,
@@ -246,8 +315,9 @@ See [docs/ANALYSES.md](docs/ANALYSES.md) for algorithms, rules and limitations.
 snapshotted (content-hashed) and evaluated with all of the above through `python -m gauntlet candidate ...`
 under a process sandbox that is explicitly *not* a security boundary; strict (container) isolation is not
 implemented and fails closed. See [docs/CANDIDATES.md](docs/CANDIDATES.md) and the agent-evaluation
-protocol in [docs/AGENT_EVALUATION_PROTOCOL.md](docs/AGENT_EVALUATION_PROTOCOL.md). No AI coding agent has
-been evaluated; only labelled synthetic fixtures have been run.
+protocol in [docs/AGENT_EVALUATION_PROTOCOL.md](docs/AGENT_EVALUATION_PROTOCOL.md). On the host only labelled
+synthetic fixtures have been run; one Gemini-generated candidate has been evaluated once, inside a disconnected
+VM ([research/gemini-attempt2-results.md](research/gemini-attempt2-results.md)). No agent study has been run.
 
 ## Repository layout
 
@@ -269,14 +339,17 @@ backend/
 frontend/         React + TypeScript + Vite dashboard
 docs/             RESEARCH_METHODOLOGY, RESEARCH_DESIGN, INVARIANTS, FAULT_CATALOG, ARCHITECTURE, ANALYSES,
                   CANDIDATES, AGENT_EVALUATION_PROTOCOL, SECURITY_MODEL, REPRODUCIBILITY, LIMITATIONS, DEMO,
-                  RELEASE_v0.4.0, agent_task/ (task bundle for a future agent study),
+                  RELEASE_v0.4.1, RELEASE_v0.4.0, THIRD_PARTY, agent_task/ (task bundle for a future agent study),
                   RESULTS-v0.3.0, RESULTS-v0.2.0, RESULTS (v0.1.0), GAUNTLET_VALIDATION_AUDIT (v0.1.0 audit)
 research/         technical report, results summary, demo script and transcript, open questions
 evidence/         frozen benchmark databases with SHA-256 checksums (v0.3.0, plus historical v0.2.0 and
                   v0.1.0) and the supplementary v0.3.0 conventional re-run record
 audit/            scripts used by the validation audit (see audit/PROVENANCE.md)
-docker-compose.yml   PostgreSQL 16 service (alternative to the local cluster; untested here)
+scripts/          run_demo.sh (one-command demonstration), compare_benchmark.py (re-execution vs frozen evidence)
+.github/          continuous-integration workflow
+docker-compose.yml   PostgreSQL 16 service (alternative to the local cluster; used by the Linux CI jobs)
 PROJECT_SPEC.md      full specification + implementation status
+CHANGELOG.md  SECURITY.md  CONTRIBUTING.md  CODE_OF_CONDUCT.md  CITATION.cff  LICENSE  NOTICE
 ```
 
 ## Setup
@@ -309,13 +382,37 @@ You can also point `GAUNTLET_PG_BIN` at an existing PostgreSQL 16 `bin/` directo
 docker compose up -d            # same port and credentials as option 1
 ```
 
-This path is provided but **was not tested**: Docker was not available on the development machine.
+Docker was not available on the development machine. This path is exercised by the Linux continuous-integration
+jobs, which start PostgreSQL 16 from this file and run the full test suite against it.
 
 ### Any other PostgreSQL 16 server
 
 Set `GAUNTLET_PG_DSN=postgresql://user:pass@host:port/postgres`. The user needs `CREATEDB`, because each
-run creates and drops its own database, and `CREATEROLE` for external candidates, which run under a
-per-run restricted role.
+run creates and drops its own database, and `CREATEROLE` for external candidates: the harness connects on
+the candidate's behalf as a per-run restricted role, and reads snapshots as a per-run observer role. A
+non-superuser admin has not been tested.
+
+## Configuration
+
+GAUNTLET is configured with environment variables. All of them are optional.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GAUNTLET_PG_DSN` | `postgresql://gauntlet:gauntlet@127.0.0.1:55432/postgres` | Administrator connection to the PostgreSQL 16 server. The default password is a published development default, not a secret; use it only for a server bound to `127.0.0.1` |
+| `GAUNTLET_HOME` | `<repository>/.gauntlet` | Working directory: local PostgreSQL cluster, results database, candidate snapshots (git-ignored) |
+| `GAUNTLET_RESULTS_DB` | `$GAUNTLET_HOME/results.sqlite3` | SQLite file for run records. Every command adds missing tables to the file it opens, so **never point it at a file in `evidence/`**; work on a copy |
+| `GAUNTLET_CANDIDATES_DIR` | `$GAUNTLET_HOME/candidates` | Where registered candidate snapshots are stored |
+| `GAUNTLET_PG_BIN` | portable binaries under `$GAUNTLET_HOME/pgdist` | An existing PostgreSQL 16 `bin/` directory for `gauntlet pg init/start/stop` |
+| `GAUNTLET_STEP_TIMEOUT_S` | `20` | How long one granted statement may run without completing or blocking on a lock |
+| `GAUNTLET_STEP_CANCEL_GRACE_S`, `GAUNTLET_STEP_STALL_GAP_S` | `5`, `2` | Evidence thresholds for attributing a step timeout to a candidate ([docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)) |
+| `GAUNTLET_LOCK_TIMEOUT_MS`, `GAUNTLET_MONITOR_LOCK_TIMEOUT_MS` | `15000` | Lock-wait bounds for actor and harness connections |
+| `GAUNTLET_MAX_RESULT_ROWS`, `GAUNTLET_MAX_RESULT_BYTES` | `100000`, 16 MiB | Largest result one statement may return to an actor |
+| `GAUNTLET_ACTOR_CONNECT_TIMEOUT_S` | `10` | Bound on opening an actor's database connection |
+| `GAUNTLET_MAX_CANDIDATE_RUNS` | `2` | External-candidate runs that may execute at the same time |
+| `GAUNTLET_API_ALLOWED_HOSTS`, `GAUNTLET_API_ALLOWED_ORIGINS` | none | Extra `Host` names and dashboard origins the API accepts besides the loopback defaults |
+
+The timeouts are safety nets, not part of the logical schedule: a run that hits one is recorded as an
+infrastructure error, a timeout or a candidate failure, never as a pass.
 
 ## Commands
 
@@ -339,10 +436,33 @@ Every `run` is persisted to `.gauntlet/results.sqlite3` and is visible in the da
 
 ## Tests
 
-Proposed v0.4.0 (release review, 2026-10-22, Windows 11, Python 3.14.0, PostgreSQL 16.14, run by the
-author): **409 passed, 0 failed** (`python -m pytest`, of which 67 need PostgreSQL), plus `npm run
-typecheck` and `npm run build`, both in the working tree and in a clean copy installed with
-`backend/constraints.txt`. The numbers below describe the frozen v0.3.0 release. A step-by-step demonstration is in [docs/DEMO.md](docs/DEMO.md).
+Version 0.4.1, verified on 2026-11-13 (author-run; not independently reproduced):
+
+| Where | Result |
+|---|---|
+| Windows 11, Python 3.14.0, PostgreSQL 16.14 (development machine) | **585 passed, 0 failed, 0 skipped** (`python -m pytest`, about 12 min) |
+| Windows 11, Python 3.11.18, PostgreSQL 16.14 (development machine) | **585 passed, 0 failed, 0 skipped** |
+| CI: Windows Server 2025, Python 3.14, PostgreSQL 16.14 | **585 passed, 0 skipped**; demonstration script 9 of 9 |
+| CI: Ubuntu 26.04.1, Python 3.11 and 3.14, PostgreSQL 16.16 from `docker-compose.yml` | **579 passed, 6 skipped** on each Python version; demonstration script 9 of 9 |
+| Dashboard | `npm run typecheck` and `npm run build` pass; `npm audit` reports 0 vulnerabilities |
+
+On Linux, six tests that check Windows job-object limits are skipped by design, with the reason printed.
+The first CI runs on Linux and on Python 3.11, on an earlier build of this release, found two defects, both
+fixed in 0.4.1: the package could not be imported on Python 3.11, and the actor-protocol reader accepted
+JSON values that were not objects (see [CHANGELOG.md](CHANGELOG.md)). Nothing has been run on macOS.
+
+Before 0.4.1, full runs on the development machine ended with one failure (510 of 511, then 511 of 512). It was the
+`< 10 s` wall-clock bound in `test_row_and_byte_budgets_stop_the_statement_without_buffering_it` (audit
+finding FR-9, previously attributed to disk load). Its query put `generate_series` in `FROM`, which
+PostgreSQL materializes into a 668 MB temporary file before returning the first row; that took about 11 s
+on an idle machine, so the bound measured the disk and not the harness's result budget. The query now
+streams its rows (0.2 s); the bound and the assertions are unchanged. Other tests still contain wall-clock
+bounds and can fail on a heavily loaded machine. A machine that goes to sleep during the run also causes
+failures: cleanup connections time out across the suspension, and the leak checks then report a test
+database that was not dropped. Keep the machine awake for the 12 to 15 minutes the suite takes.
+
+The tagged v0.4.0 release had 409 tests (67 need PostgreSQL). The numbers below describe the frozen v0.3.0
+release. A step-by-step demonstration is in [docs/DEMO.md](docs/DEMO.md).
 
 ```bash
 cd backend
@@ -393,6 +513,11 @@ python -m gauntlet serve                 # API on http://127.0.0.1:8000
 cd frontend && npm install && npm run dev  # UI on http://localhost:5173 (proxies /api to :8000)
 ```
 
+Both servers listen on the loopback interface only and have no authentication; keep it that way (do not
+pass `--host`). The development server sends no CORS headers and serves only the dashboard's own files,
+so other web pages open in your browser cannot read files or API data through it
+([docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md#the-api-and-dashboard)).
+
 | View | What it shows |
 |---|---|
 | **Overview** | Purpose, benchmark version, counts, PostgreSQL status, latest benchmark metrics (shown as *Unavailable* if none has run), detection matrix, mutant validation table |
@@ -407,6 +532,38 @@ cd frontend && npm install && npm run dev  # UI on http://localhost:5173 (proxie
 | **Differential / Exploration / Minimization** | Start and inspect the analyses described above; replay and minimize actions on run detail |
 | **Experiments** | Experiment reports with *Verify evidence* (re-hashes the manifest) |
 | **Candidates** | Registered external candidates, snapshot integrity and evaluation summaries |
+
+## API
+
+`python -m gauntlet serve` starts a local HTTP API on `http://127.0.0.1:8000`; interactive documentation
+generated from the code is at `http://127.0.0.1:8000/docs`. Runs and analyses are queued and executed one
+at a time; a `POST` returns an id immediately and you poll for the result.
+
+```bash
+curl http://127.0.0.1:8000/api/health
+curl -X POST http://127.0.0.1:8000/api/runs -H "Content-Type: application/json" \
+     -d '{"scenario_id": "S02_backfill_vs_legacy_writes", "impl_id": "m1_stale_backfill", "seed": 1}'
+# -> {"id": "<run_id>", "status": "queued"}
+curl http://127.0.0.1:8000/api/runs/<run_id>               # status, verdict, hashes, metrics
+curl http://127.0.0.1:8000/api/runs/<run_id>/invariants    # the 12 invariant results with evidence
+curl http://127.0.0.1:8000/api/runs/<run_id>/report        # Markdown report
+curl -X POST http://127.0.0.1:8000/api/differential -H "Content-Type: application/json" \
+     -d '{"impl_ids": ["ref_a_trigger", "m1_stale_backfill"], "scenario_id": "S02_backfill_vs_legacy_writes", "seed": 1}'
+curl http://127.0.0.1:8000/api/differential/<comparison_id>
+```
+
+| Area | Endpoints |
+|---|---|
+| Catalog | `GET /api/meta`, `/api/scenarios`, `/api/implementations`, `/api/invariants`, `/api/faults`, `/api/fixtures` |
+| Runs | `POST /api/runs`, `GET /api/runs`, `GET /api/runs/{id}` (`/trace`, `/invariants`, `/report`), `POST /api/runs/{id}/replay`, `GET /api/compare?a=&b=` |
+| Analyses | `POST` and `GET` on `/api/differential`, `/api/explorations`, `/api/minimizations`; `POST /api/analyses/{id}/cancel` |
+| Experiments | `POST /api/experiments`, `POST /api/experiments/{id}/report`, `GET /api/experiments/{id}/verify`, `/export` |
+| Candidates | `GET /api/candidates`, `GET /api/isolation`, `POST /api/evaluations`, `GET /api/evaluations/{id}` |
+
+The API has **no authentication** and is for local use only. It accepts only requests addressed to a
+loopback name, refuses state-changing requests from other web origins, and requires JSON bodies
+([docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md#the-api-and-dashboard)). Candidates cannot be registered
+through the API; that is a command-line operation.
 
 ## How a run works (short version)
 
@@ -427,10 +584,25 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/INVARIANTS.md](docs/I
 
 ## Limitations (summary)
 
-* No AI agent has been evaluated yet. The candidate pipeline exists, but no execution mode is a security
-  boundary: `process` isolation does not stop host-file reads (including the oracle), native-code network
-  access or guard bypass, and `strict` (container/VM) isolation is not implemented. See
-  [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
+* No study of an external AI coding agent (Gemini, Claude or any other) has been run. One candidate generated
+  with Gemini was evaluated once, inside a disconnected VM, as a demonstration: it failed one of six scenarios
+  (`C1_COMPATIBILITY` under premature finalization) ([research/gemini-attempt2-results.md](research/gemini-attempt2-results.md)). One attempt says nothing about how often a
+  model produces such a defect. All other validation uses hand-written references, hand-written mutants and
+  labelled synthetic candidate fixtures.
+* The candidate pipeline exists, but no execution mode is a security boundary. Candidate code in
+  `process` mode can read host files (including the oracle), switch off the Python-level guard (plain
+  Python suffices; the guard is a tripwire for trusted code, not a control), read the harness's
+  environment or memory (same OS user), open network connections, and open its own database connection.
+  Withholding credentials from the actor does not prevent this. `strict` (container/VM) isolation is not
+  implemented.
+* Audit finding A-02 is addressed since 0.4.1: an external candidate's database is observed by a
+  per-run non-superuser role, never by a superuser session. The harness still holds superuser
+  credentials (control connection, provisioning), which native candidate code can read in `process` mode.
+* A candidate statement that runs past the step timeout is classified `candidate_statement_timeout` only
+  when the harness's evidence supports it; ambiguous cases stay infrastructure errors. Neither is ever a
+  pass, and the evidence rule is a heuristic (see the security model).
+
+  Details: [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
 * Interleavings are explored at SQL-statement granularity: scripted or seeded-random in the benchmark,
   and exhaustively only within one interleave directive and a preemption bound (default 1) in
   exploration.
@@ -440,16 +612,38 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/INVARIANTS.md](docs/I
   of it has been independently reproduced.
 * One conventional test in the v0.3.0 benchmark (m2, CT03) ended in an infrastructure error whose cause
   is unknown.
-* Docker Compose is untested.
+* Linux, Docker Compose and Python 3.11 are verified only by the continuous-integration run, not by a
+  person; macOS has not been run.
 * Each run takes about 4–10 s on Windows, dominated by process start-up.
 
 Full list: [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
+## Roadmap
+
+None of the following is implemented, and no dates are set.
+
+1. **Measure instead of demonstrate.** Freeze a protocol (prompts, models, number of attempts, seeds,
+   analysis plan) before collecting data; evaluate many independently generated migrations under identical
+   conditions; report failure rates per invariant with confidence intervals; publish the raw evidence. The
+   protocol draft is [docs/AGENT_EVALUATION_PROTOCOL.md](docs/AGENT_EVALUATION_PROTOCOL.md).
+2. **Test the blind-spot claim on external code.** Run the conventional suite on external candidates, so
+   that "passes ordinary tests, fails adversarial runs" can be measured for them too.
+3. **A real isolation boundary.** Implement `strict` mode against a container or VM and test it with
+   deliberately hostile fixtures ([docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md#what-must-exist-before-evaluating-untrusted-ai-generated-code)).
+   Until then, every untrusted candidate needs its own disconnected VM.
+4. **Wider search.** Exploration over more than one interleave directive and over crash points; detection
+   as a function of budget.
+5. **More tasks and independent scenarios.** New task families beyond the one money-column migration, and
+   scenarios and faulty variants written by someone other than the author.
+
 ## Contributing, licence and citation
 
-* Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md). Independent reproduction reports are the most
-  valuable contribution.
-* Security: see [SECURITY.md](SECURITY.md).
-* Licence: [Apache License 2.0](LICENSE). It covers the whole repository, including the frozen evidence
-  and results records.
+* Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md).
+  Independent reproduction reports are the most valuable contribution.
+* Security: see [SECURITY.md](SECURITY.md). Report vulnerabilities privately.
+* Changes: see [CHANGELOG.md](CHANGELOG.md).
+* Licence: [Apache License 2.0](LICENSE); copyright notice in [NOTICE](NOTICE). It covers the whole
+  repository, including the frozen evidence and results records. The repository contains no third-party
+  source code. The software it depends on is installed separately and keeps its own licences, among them
+  the LGPL-3.0 PostgreSQL driver psycopg: see [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
 * Citation: see [CITATION.cff](CITATION.cff).

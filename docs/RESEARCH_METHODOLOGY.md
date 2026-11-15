@@ -10,7 +10,9 @@ authoritative. Hypotheses and their measurement status are in [RESEARCH_DESIGN.m
 > recovery guarantees under unseen combinations of concurrency, partial failure, retries and interrupted
 > execution?
 
-This version does **not** answer the question: no AI agent has been evaluated. It builds and validates
+This version does **not** answer the question: no study of an AI agent has been run (one
+Gemini-generated candidate has been evaluated once, as a demonstration:
+[../research/gemini-attempt2-results.md](../research/gemini-attempt2-results.md)). It builds and validates
 the *instrument*: a precisely specified task, a controllable and reproducible adversarial execution
 engine, an oracle independent of the implementation under test, and evidence that the instrument
 separates correct from incorrect implementations for the intended reasons.
@@ -177,7 +179,8 @@ the benchmark into a new database, the synthetic end-to-end demonstration).
 * **Unexplained event.** Conventional test CT03 for m2 in the v0.3.0 benchmark ended in an infrastructure
   error of unknown cause (recorded as inconclusive).
 * **No independent reproduction.** All validation was run by the author.
-* **No agent evaluated; no security boundary** for untrusted code.
+* **No agent study** (one Gemini-generated candidate evaluated once, as a demonstration); **no security
+  boundary** for untrusted code in GAUNTLET itself.
 
 Full lists: [LIMITATIONS.md](LIMITATIONS.md), [RESEARCH_DESIGN.md](RESEARCH_DESIGN.md#threats-to-validity)
 and [../research/open-questions.md](../research/open-questions.md).

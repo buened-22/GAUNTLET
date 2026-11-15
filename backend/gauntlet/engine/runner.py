@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
@@ -22,13 +23,14 @@ import psycopg
 
 from gauntlet import BENCHMARK_VERSION
 from gauntlet.config import PG_ADMIN_DSN
-from gauntlet.actor.proxy import ActorFailure, ProcessPool
+from gauntlet.actor.proxy import ActorFailure, ProcessPool, StepTimeout
 from gauntlet.engine.controller import Controller, RunLimitExceeded, RunTimeout, ScheduleError
 from gauntlet.impls.registry import get_info
 from gauntlet.oracle.checker import RunOracle, infra_results, verdict
+from gauntlet.engine.observe import ObservationObstructed
 from gauntlet.pg.provision import (
-    InfrastructureError, apply_legacy_schema, check_server, create_candidate_role, create_run_database,
-    drop_candidate_role, drop_run_database,
+    InfrastructureError, apply_legacy_schema, check_server, create_candidate_role, create_observer_role,
+    create_run_database, drop_candidate_role, drop_run_database, grant_observer_read,
 )
 from gauntlet.scenarios.catalog import SCENARIOS, get_scenario
 
@@ -52,6 +54,47 @@ def schedule_definition(scenario_id: str, seed: int) -> dict:
     return {"benchmark_version": BENCHMARK_VERSION, "scenario_id": scenario_id, "seed": seed,
             "initial_orders": {str(k): v for k, v in sorted(built["initial_orders"].items())},
             "directives": built["directives"], "ops": built["ops"]}
+
+
+def open_monitor(dsn: str) -> psycopg.Connection:
+    """The harness's own observation connection, with a bounded lock wait (see MONITOR_LOCK_TIMEOUT_MS)."""
+    from gauntlet import config
+    conn = psycopg.connect(dsn, autocommit=True, application_name="gauntlet:monitor")
+    conn.execute(f"SET lock_timeout = {int(config.MONITOR_LOCK_TIMEOUT_MS)}")
+    return conn
+
+
+# Session settings of the restricted observer (audit finding A-02), passed as startup options: they take
+# precedence over per-database and per-role defaults, which the candidate (owner of the run database) can change.
+_PINNED_PATH = "-c search_path=pg_catalog,pg_temp"
+
+
+def open_observer(dsn: str) -> psycopg.Connection:
+    """The snapshot connection of an external candidate's run: the per-run observer role (not a superuser),
+    ``search_path`` pinned to the catalog, ``row_security = off`` (row-level security becomes an error instead
+    of silent filtering), read-only transactions by default and a bounded lock wait. Verified after connecting."""
+    from gauntlet import config
+    options = (f"{_PINNED_PATH} -c row_security=off -c default_transaction_read_only=on "
+               f"-c lock_timeout={int(config.MONITOR_LOCK_TIMEOUT_MS)}")
+    conn = psycopg.connect(dsn, autocommit=True, application_name="gauntlet:observer", connect_timeout=10,
+                           options=options)
+    try:
+        row = conn.execute("SELECT pg_catalog.current_setting('search_path'), pg_catalog.current_setting('row_security'), "
+                           "r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = current_user").fetchone()
+        if row is None or row[0].replace(" ", "") != "pg_catalog,pg_temp" or row[1] != "off" or row[2]:
+            raise InfrastructureError(f"the observer session is not configured as required: {row}")
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
+def open_control(admin_dsn: str) -> psycopg.Connection:
+    """The control connection of an external candidate's run: lock probe, liveness, backend termination and
+    statement activity. It connects to the admin DSN's database (the maintenance database), never to the run
+    database, so it never resolves a name inside a database the candidate owns."""
+    return psycopg.connect(admin_dsn, autocommit=True, application_name="gauntlet:control", connect_timeout=10,
+                           options=_PINNED_PATH)
 
 
 def logical_trace(events: list[dict]) -> list[dict]:
@@ -116,6 +159,7 @@ def execute_run(scenario_id: str, impl_id: str, seed: int, admin_dsn: str = PG_A
     pool = None
     slot = None
     cand_role = None
+    obs_role = None
     actor_dsn = None
     iso_cfg = None
     try:
@@ -143,13 +187,24 @@ def execute_run(scenario_id: str, impl_id: str, seed: int, admin_dsn: str = PG_A
         if external:
             cand_role, role_db = create_candidate_role(db, admin_dsn)
             actor_dsn = role_db.dsn
-            run["database_role"] = {"name": cand_role, "superuser": False, "owns": "its run database only"}
+            # A-02: snapshots are read by a separate non-superuser observer role, never by a superuser session
+            obs_role, obs_db = create_observer_role(db, admin_dsn)
+            run["database_role"] = {"name": cand_role, "superuser": False, "owns": "its run database only",
+                                    "observer": obs_role}
         apply_legacy_schema(actor_dsn, {int(k): v for k, v in schedule["initial_orders"].items()})
-        with psycopg.connect(db.dsn, autocommit=True, application_name="gauntlet:monitor") as monitor:
+        if external:
+            grant_observer_read(actor_dsn, obs_role)  # as the candidate role, before any candidate code runs
+        with contextlib.ExitStack() as stack:
+            if external:
+                monitor = stack.enter_context(open_observer(obs_db.dsn))
+                control = stack.enter_context(open_control(admin_dsn))
+            else:  # built-in (trusted) implementations: unchanged
+                monitor = stack.enter_context(open_monitor(db.dsn))
+                control = None
             remaining = time_limit_s - (time.perf_counter() - t0) if time_limit_s else None
             deadline = time.monotonic() + remaining if remaining is not None else None
             ctl = Controller(impl_id, actor_dsn, monitor, copy.deepcopy(schedule["ops"]), pool,
-                             deadline=deadline, max_events=max_events)
+                             deadline=deadline, max_events=max_events, control=control)
             # The deadline is checked at every engine step; the watchdog additionally kills the actors
             # if a single wait outlasts it, so a stuck step cannot hold the run indefinitely.
             watchdog = threading.Timer(max(remaining, 0), ctl.abort) if remaining is not None else None
@@ -162,6 +217,9 @@ def execute_run(scenario_id: str, impl_id: str, seed: int, admin_dsn: str = PG_A
             finally:
                 if watchdog:
                     watchdog.cancel()
+                    # cancel() does not stop an abort() that already started: let it finish before shutdown
+                    # touches the same actors (abort only kills processes, so this is short).
+                    watchdog.join(timeout=30)
                 ctl.shutdown()
     except InfrastructureError as exc:
         run["infra_error"] = str(exc)
@@ -171,8 +229,15 @@ def execute_run(scenario_id: str, impl_id: str, seed: int, admin_dsn: str = PG_A
         run["error_class"] = ("timeout" if isinstance(exc, RunTimeout) or timed_out else
                               "limit_exceeded" if isinstance(exc, RunLimitExceeded) else
                               "schedule_error" if isinstance(exc, ScheduleError) or str(exc).startswith("schedule error")
+                              # a statement over the step timeout: the candidate's only when the evidence says so
+                              else "candidate_statement_timeout" if external and isinstance(exc, StepTimeout)
+                              and exc.attributable and exc.loaded
+                              # the candidate made its own database unobservable (A-02 observer)
+                              else "candidate_execution_failure" if external and isinstance(exc, ObservationObstructed)
                               else "candidate_execution_failure" if external and isinstance(exc, ActorFailure) and exc.loaded
                               else "infrastructure")
+        if isinstance(exc, StepTimeout):
+            run["notes"].append("step timeout evidence: " + json.dumps(exc.evidence, sort_keys=True, default=str))
     except Exception as exc:  # harness bug (or a candidate admission failure): never report as pass
         admission = _candidate_admission_error(exc) if external else None
         if admission:
@@ -185,14 +250,32 @@ def execute_run(scenario_id: str, impl_id: str, seed: int, admin_dsn: str = PG_A
                 run["error_class"] = "timeout"
             run["notes"].append(traceback.format_exc(limit=8))
     finally:
+        # Each cleanup step runs even if an earlier one fails, so a failure here can never leak the run
+        # database, the candidate role or the execution slot. Failures are recorded, not raised: they happen
+        # after the run's observations are complete and do not change them.
+        cleanup_errors: list[str] = []
+
+        def attempt(what: str, fn):
+            try:
+                return fn()
+            except Exception as exc:  # noqa: BLE001
+                cleanup_errors.append(f"{what}: {type(exc).__name__}: {exc}")
+                return None
+
         if pool is not None:
-            pool.close()
+            attempt("close actor pool", pool.close)
         if db is not None and not keep_database:
-            drop_run_database(db, admin_dsn)
-        if cand_role is not None and not keep_database and not drop_candidate_role(cand_role, admin_dsn):
+            attempt("drop run database", lambda: drop_run_database(db, admin_dsn))
+        if cand_role is not None and not keep_database \
+                and attempt("drop candidate role", lambda: drop_candidate_role(cand_role, admin_dsn)) is False:
             run["notes"].append(f"candidate database role {cand_role} could not be removed")
+        if obs_role is not None and not keep_database \
+                and attempt("drop observer role", lambda: drop_candidate_role(obs_role, admin_dsn)) is False:
+            run["notes"].append(f"observer database role {obs_role} could not be removed")
         if slot is not None:
-            slot.release()
+            attempt("release execution slot", slot.release)
+        run["cleanup_errors"] = cleanup_errors
+        run["notes"] += [f"cleanup: {e}" for e in cleanup_errors]
     run["duration_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
     if ctl is not None:
@@ -204,6 +287,7 @@ def execute_run(scenario_id: str, impl_id: str, seed: int, admin_dsn: str = PG_A
         run["inconclusive"] = ctl.inconclusive
         run["notes"] += ctl.notes
         run["decisions"] = {str(k): v for k, v in ctl.decisions.items()}
+        run["statement_log"] = ctl.statement_log  # every executed statement (not part of the trace hash)
         if external:  # what each sandboxed actor wrote to stderr (bounded capture; the rest is counted only)
             run["actor_output"] = {name: {"stderr_bytes": p.child.stderr_bytes, "truncated": p.child.stderr_truncated,
                                           "tail": p.child.stderr_tail[-5:]}

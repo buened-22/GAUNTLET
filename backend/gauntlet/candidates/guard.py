@@ -7,11 +7,24 @@ code is imported. It denies, by raising PermissionError:
   workspace;
 * starting processes (subprocess, os.system, os.exec*, os.spawn*, os.startfile, os.fork) and os.kill;
 * socket operations (connect, bind, sendto, getaddrinfo);
-* loading native code through ctypes, and importing ctypes / _ctypes / subprocess / socket / _socket.
+* loading native code through ctypes, and importing ctypes / _ctypes / subprocess / socket / _socket /
+  multiprocessing / _winapi and the database drivers psycopg / psycopg_c / psycopg_binary / psycopg2.
 
-An audit hook cannot be removed once installed, but it is NOT a security boundary: native code (for
-example an already-loaded C extension) can bypass it. The harness's own database connection is opened
-by libpq before the guard is installed and is not affected.
+It is NOT a security boundary, and it is not a control against a deliberately hostile candidate. Its purpose
+is to stop *trusted* code from using these facilities by accident.
+
+* Plain Python can switch most of it off. An audit hook cannot be removed once installed, but this one
+  reads its rules (``_DENY``, ``_DENY_IMPORTS``, ``_PATH_EVENTS``, ``_WRITE_FLAGS``) from this module's
+  globals each time it runs, and candidate code can reach this module through ``sys.modules`` and rebind
+  them. A candidate doing so passes static validation. ``tests/test_candidate_sandbox.py`` demonstrates it
+  (security audit finding F-02). Moving the rules into the hook's closure would not change this: the hook
+  object and its closure cells are reachable from Python too.
+* Native code (for example an already-loaded C extension) can bypass it entirely.
+
+What still holds against a candidate that has switched it off are the operating-system limits applied by
+``sandbox.py``: on Windows the job object's process-count, memory and CPU-time limits (verified by tests).
+The actor process has no database connection at all (the harness owns it, audit finding A-01); denying
+the database driver's import here is defense in depth, not isolation.
 """
 
 from __future__ import annotations
@@ -28,7 +41,8 @@ _DENY = ("subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn
          "socket.sendto", "socket.sendmsg", "socket.getaddrinfo", "socket.gethostbyname", "ctypes.dlopen",
          "ctypes.dlsym", "ctypes.call_function", "ctypes.cdata", "sys.setprofile", "sys.settrace",
          "winreg.OpenKey", "winreg.CreateKey", "winreg.SetValue")
-_DENY_IMPORTS = ("ctypes", "_ctypes", "subprocess", "socket", "_socket", "multiprocessing", "_winapi")
+_DENY_IMPORTS = ("ctypes", "_ctypes", "subprocess", "socket", "_socket", "multiprocessing", "_winapi",
+                 "psycopg", "psycopg_c", "psycopg_binary", "psycopg2")
 
 _installed = False
 denied: list[str] = []  # events denied so far (reported in the actor's stderr)

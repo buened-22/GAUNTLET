@@ -2,11 +2,15 @@
 
 ## What the prototype does not prove
 
-* **Nothing about AI agents.** No solution produced by Claude, Gemini or any other model has been
-  evaluated. Every implementation evaluated here was written by hand, as references or mutants, or is a
-  labelled synthetic candidate fixture (a manually adapted copy of a reference, with or without a
-  deliberately injected defect).
-* **No safe execution of untrusted code.** `process` isolation is not a security boundary and `strict`
+* **Nothing about AI agents in general.** No study of Gemini, Claude or any other AI coding agent has been
+  run. One candidate generated with Gemini (attempt 2) was evaluated once, inside a disconnected VM, as a
+  demonstration ([../research/gemini-attempt2-results.md](../research/gemini-attempt2-results.md)); one attempt
+  says nothing about how often a model produces a defect. Every other implementation evaluated here was written
+  by hand, as references or mutants, or is a labelled synthetic candidate fixture (a manually adapted copy of a
+  reference, with or without a deliberately injected defect).
+* **No safe execution of untrusted code.** `process` isolation is not a security boundary: native
+  candidate code can read host files, the harness's environment or memory, open network connections and
+  open its own database connection, whether or not the actor is given credentials. `strict`
   (container/VM) isolation is not implemented. See [SECURITY_MODEL.md](SECURITY_MODEL.md).
 * **Not that the references are correct in general.** They passed the six scenarios over the
   seeds that were run. That is evidence about those schedules, not a proof.
@@ -50,11 +54,22 @@
 8. **Experiment evidence checks are internal.** An experiment manifest is stored in the same database
    as the evidence it hashes, so `verify` detects accidental change, not deliberate tampering. Keep the
    export bundle hash externally for tamper evidence.
-9. **POSIX sandbox unexercised.** The POSIX `process`-mode path (`RLIMIT_AS`, `RLIMIT_CPU`, no
-   process-count limit) has never been run; only Windows was verified.
-10. **Docker path untested.** `docker-compose.yml` is provided but could not be exercised on the
-   development machine. All results were produced against the portable local cluster
-   (PostgreSQL 16.14).
+9. **POSIX limits unverified.** The POSIX `process`-mode path (`RLIMIT_AS`, `RLIMIT_CPU`, no
+   process-count limit) runs in the Linux continuous-integration jobs, but the tests that check that the
+   limits are enforced exist only for the Windows job object and are skipped on Linux.
+10. **Docker path verified only in CI.** `docker-compose.yml` could not be exercised on the development
+   machine; the Linux continuous-integration jobs run the test suite against it. All recorded results
+   were produced against the portable local cluster (PostgreSQL 16.14), and the benchmark has not been
+   re-executed on Linux.
+11. **Observation privileges (A-02, addressed in v0.4.1).** External candidates'
+   databases are observed by a per-run non-superuser role; the control connection and provisioning still use
+   superuser credentials, a candidate can make its database unobservable (a candidate execution failure,
+   never a pass), and the non-superuser-admin configuration is untested. See
+   [SECURITY_MODEL.md](SECURITY_MODEL.md).
+12. **Step-timeout attribution is a heuristic.** A candidate statement that exceeds the step timeout is
+   classified `candidate_statement_timeout` only with supporting evidence, otherwise `infrastructure`
+   (never a pass). A host that slows the server but not the harness can still make a CPU-bound statement
+   look like the candidate's fault. See [SECURITY_MODEL.md](SECURITY_MODEL.md).
 
 ## Future work (ordered by expected value)
 

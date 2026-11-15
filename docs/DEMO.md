@@ -1,8 +1,20 @@
 # Demonstration runbook
 
-Exact steps for a reviewer to run the prototype locally. Every command below was executed during the
-readiness pass on Windows 11 / Python 3.14 / PostgreSQL 16.14 (Git Bash syntax; adapt `export` for other
-shells). Nothing here evaluates an AI coding agent; candidate steps use labelled synthetic fixtures.
+Exact steps for a reviewer to run the prototype locally (Git Bash syntax; adapt `export` for other shells).
+Nothing here evaluates an AI coding agent; candidate steps use labelled synthetic fixtures. All runs are
+author-run on Windows 11 / Python 3.14 / PostgreSQL 16.14:
+
+* every command was re-run on 2026-11-04 from a clean copy with a freshly installed PostgreSQL, before the
+  FR-3 and A-02 commits;
+* at the current commit `2a73551` (2026-11-05), steps 2 (checksums and full suite), 4, 5, 6 and the API
+  evidence check of step 8 were re-run, from `backend/` with the equivalent relative paths; the dashboard
+  (step 7) and the frontend build were not ([../research/demo-readiness-report.md](../research/demo-readiness-report.md)).
+
+For a timed 5-minute presenter walkthrough see [../research/demo-script.md](../research/demo-script.md); for
+security wording see [DEMO_SECURITY_NOTES.md](DEMO_SECURITY_NOTES.md). **`process` isolation is not a security
+boundary and `strict` (VM/container) isolation is not implemented: do not run untrusted or AI-generated code
+outside a disconnected, disposable VM.** The one such run so far is recorded in
+[../research/gemini-attempt2-results.md](../research/gemini-attempt2-results.md).
 
 ## 0. What you are looking at
 
@@ -15,8 +27,19 @@ client-visible ledger and raw database snapshots. See README.md for the full bac
 
 Prerequisites: Python >= 3.11, Node >= 18 (for the dashboard and the portable PostgreSQL download).
 
+Create and activate a virtual environment in the repository root:
+
 ```bash
-python -m venv .venv && source .venv/Scripts/activate      # macOS/Linux: source .venv/bin/activate
+# Windows, Git Bash (the shell used for every command in this runbook)
+python -m venv .venv && source .venv/Scripts/activate
+# Windows, PowerShell:   python -m venv .venv; .venv\Scripts\Activate.ps1
+# Windows, cmd.exe:      python -m venv .venv && .venv\Scripts\activate.bat
+# macOS / Linux:         python3 -m venv .venv && source .venv/bin/activate
+```
+
+Then, with the environment active:
+
+```bash
 pip install -c backend/constraints.txt -e "backend[dev]"      # exact verified versions (or omit -c ...)
 python -m gauntlet pg install && python -m gauntlet pg init && python -m gauntlet pg start
 python -m gauntlet pg check                                 # "is_pg16": true
@@ -28,9 +51,22 @@ python -m gauntlet pg check                                 # "is_pg16": true
 # v0.1.0-v0.3.0 were developed in a separate repository (v0.3.0 = commit 694577b, see docs/HISTORY.md);
 # here the frozen evidence is verified by its checksums:
 (cd evidence && sha256sum -c *.sha256)                      # four OK lines
-cd backend && python -m pytest -q -m "not pg" && python -m pytest -q && cd ..
-cd frontend && npm install && npm run typecheck && npm run build && cd ..
+(cd backend && python -m pytest -q -m "not pg")             # unit tests only (no database)
+(cd backend && python -m pytest -q)                         # full suite, about 10 min (much longer under disk load)
+(cd frontend && npm install && npm run typecheck && npm run build)
 ```
+
+The subshells keep you in the repository root whatever a command's exit status. The latest full run
+(2026-11-14, Windows 11, Python 3.14.0, PostgreSQL 16.14) is **585 passed, 0 failed, 0 skipped** in about
+12 minutes. Check the summary line for skips: tests that need PostgreSQL are
+skipped, with a reason, when no server is reachable, and such a run is not a full run.
+
+At commit `2a73551` the result was 510 passed, 1 failed (511 tests). The failing test,
+`test_audit_hardening_pg.py::test_row_and_byte_budgets_stop_the_statement_without_buffering_it`, had a
+`< 10 s` wall-clock bound around a query that PostgreSQL first materializes into a 668 MB temporary file
+(audit finding FR-9); its query now streams, and the bound is unchanged. Several other tests keep
+wall-clock bounds, and earlier runs under heavy disk load showed other timing-related failures that passed
+when re-run alone.
 
 ## 3. Use a scratch results database
 
@@ -39,8 +75,11 @@ All commands below write to the results database named by `GAUNTLET_RESULTS_DB`.
 
 ```bash
 export GAUNTLET_RESULTS_DB="$PWD/.gauntlet/demo.sqlite3"
+export GAUNTLET_CANDIDATES_DIR="$PWD/.gauntlet/demo-candidates"     # optional: scratch candidate snapshots
 cp evidence/results-bench-eed0c47427.sqlite3 "$GAUNTLET_RESULTS_DB"   # optional: start from the v0.3.0 benchmark
 ```
+
+Steps 4–8 run from the repository root with the same shell, so these variables stay set.
 
 Every GAUNTLET command, including read-only ones such as `report` and `serve`, adds missing tables (e.g.
 `analyses`) to the database it opens. A copy of the evidence database therefore no longer matches
@@ -79,11 +118,12 @@ python -m gauntlet candidate validate backend/tests/candidates/synthetic_stale_b
 python -m gauntlet candidate register backend/tests/candidates/synthetic_stale_backfill   # cand-6478453bb5dd4e78
 python -m gauntlet candidate evaluate --id cand-6478453bb5dd4e78 --isolation process --trusted-dev-env \
     --scenarios S01_baseline_migration,S02_backfill_vs_legacy_writes --seeds 1 --refs ref_a_trigger \
-    --explore-max-schedules 18 --minimize-budget 20 --out candidate-summary.md
+    --explore-max-schedules 18 --minimize-budget 20 --out .gauntlet/candidate-summary.md
 ```
 
 `--trusted-dev-env` is required because `process` isolation is **not a security boundary**; the fixture is
-trusted code written for testing. Without it the evaluation is blocked (exit code 3). The summary lists
+trusted code written for testing. Without it the evaluation is blocked (exit code 3), and `--isolation strict`
+is always blocked because VM/container isolation is not implemented. The summary lists
 the candidate's source hash, isolation record, per-scenario outcomes and differential classifications,
 exploration coverage, minimization results, the experiment report id and its evidence-manifest check.
 
@@ -101,8 +141,16 @@ Minimization, Experiments (with *Verify evidence*), Candidates (evaluation summa
 
 * Frozen evidence: `sha256sum -c` in `evidence/` (step 2).
 * A candidate snapshot: `python -m gauntlet candidate verify <candidate id>`.
-* An experiment report's evidence: `curl http://127.0.0.1:8000/api/experiments/<experiment id>/verify`
-  re-hashes every run, benchmark summary and analysis the report used.
+* An experiment report's evidence (needs the API from step 7): take the id from the summary line
+  ``Experiment report `expe-…` `` of step 6, then
+
+  ```bash
+  EXPERIMENT_ID=expe-xxxxxxxxxxxx      # replace with the id from your candidate summary
+  curl "http://127.0.0.1:8000/api/experiments/$EXPERIMENT_ID/verify"
+  ```
+
+  which re-hashes every run, benchmark summary and analysis the report used. Expected for the step-6
+  evaluation: `{"ok":true,"checked":5,"missing":[],"modified":[]}`; an unknown id returns HTTP 404.
 * Any run: `python -m gauntlet replay <run id>` compares schedule, trace and outcome hashes and the verdict.
 
 ## 9. What this demonstrates, and what it does not

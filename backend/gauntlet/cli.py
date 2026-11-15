@@ -324,6 +324,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if a.cmd == "serve":
         import uvicorn
+        from gauntlet.api.local_guard import LOOPBACK_HOSTS, allowed_hosts
+        if a.host not in LOOPBACK_HOSTS:
+            print(f"WARNING: --host {a.host} is not a loopback address. The GAUNTLET API has no authentication: "
+                  "anyone who can reach this port can start runs and candidate evaluations. Requests are still "
+                  f"refused unless their Host header names one of {sorted(allowed_hosts())} "
+                  "(GAUNTLET_API_ALLOWED_HOSTS adds names). Do not expose this server on a network.",
+                  file=sys.stderr)
         uvicorn.run("gauntlet.api.app:app", host=a.host, port=a.port)
         return 0
     return 1

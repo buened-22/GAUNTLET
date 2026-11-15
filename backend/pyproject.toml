@@ -4,9 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gauntlet"
-version = "0.4.0"  # software release; BENCHMARK_VERSION (gauntlet/__init__.py) stays 0.3.0
+version = "0.4.1"  # software release; BENCHMARK_VERSION (gauntlet/__init__.py) stays 0.3.0
 description = "Adversarial evaluation framework for AI-engineered software (research prototype)"
 requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [{name = "Snigdha Tantipudi"}]
 dependencies = [
     "psycopg[binary]>=3.2",
     "fastapi>=0.110",

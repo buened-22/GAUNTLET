@@ -25,7 +25,9 @@ def run_and_save(store: Store | None, scenario_id: str, impl_id: str, seed: int,
 
 
 def outcome_class(run: dict) -> str:
-    """pass | fail | inconclusive | timeout | limit_exceeded | schedule_error | infrastructure."""
+    """pass | fail | inconclusive | timeout | limit_exceeded | schedule_error | infrastructure, or another
+    ``error_class`` of the run (for external candidates e.g. ``candidate_execution_failure``,
+    ``candidate_statement_timeout``)."""
     if run.get("infra_error"):
         return run.get("error_class") or "infrastructure"
     return run["verdict"]

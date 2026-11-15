@@ -20,7 +20,7 @@ def store(tmp_path):
 @pytest.fixture
 def client(store):
     app = create_app(store=store, executor=ThreadPoolExecutor(max_workers=1))
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8000") as c:
         yield c
 
 

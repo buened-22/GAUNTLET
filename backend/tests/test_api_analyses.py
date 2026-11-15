@@ -17,7 +17,7 @@ F01 = "F01_backfill_race_probe"
 def client(tmp_path):
     st = Store(tmp_path / "api.sqlite3")
     app = create_app(store=st, executor=ThreadPoolExecutor(max_workers=1), jobs=ThreadPoolExecutor(max_workers=1))
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8000") as c:
         c.store = st
         yield c
 

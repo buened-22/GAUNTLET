@@ -8,8 +8,8 @@ Node 24.11, PostgreSQL 16.14). Nothing here evaluates an AI coding agent.
 
 | Component | Recorded version | Required |
 |---|---|---|
-| OS | Windows 11 | Windows 11 verified; Linux/macOS expected to work for trusted code but **not verified** |
-| Python | 3.14.0 | ≥ 3.11 |
+| OS | Windows 11 | Windows 11 (all recorded results). The test suite also passes in CI on Windows Server 2025 and Ubuntu 26.04.1; the benchmark has not been re-executed on Linux; macOS is **not verified** |
+| Python | 3.14.0 | ≥ 3.11 (the test suite passes in CI on 3.11 and 3.14) |
 | PostgreSQL | 16.14 (portable cluster installed by `gauntlet pg install`) | 16.x (the results record 16.14) |
 | Node.js / npm | 24.11.0 / 11.6.1 | Node ≥ 18 (dashboard build, portable PostgreSQL download) |
 | Python packages | exact versions in `backend/constraints.txt` | install with `-c backend/constraints.txt` for identical versions |
@@ -102,10 +102,19 @@ GAUNTLET_RESULTS_DB="$PWD/.gauntlet/results-new.sqlite3" \
 ```
 
 This takes tens of minutes. Always write to a new database and a new results file; never overwrite
-`docs/RESULTS*.md` or anything in `evidence/`. Compare the new summary with
-`evidence/results-bench-eed0c47427.sqlite3` by verdicts and invariant statuses per cell and by schedule,
-trace and outcome hashes. Identical hashes are expected on PostgreSQL 16.14; other PostgreSQL builds or
-configurations may change traces (e.g. lock behaviour), which should be reported, not hidden.
+`docs/RESULTS*.md` or anything in `evidence/`. Compare the new database with the frozen one cell by cell
+(verdict, invariant statuses, and schedule, trace and outcome hashes):
+
+```bash
+python scripts/compare_benchmark.py evidence/results-bench-eed0c47427.sqlite3 .gauntlet/results-new.sqlite3
+```
+
+The script opens both files read-only and exits with status 0 only if all 180 cells are identical. For the
+comparison alone, `bench --seeds 1,2,3 --no-repro --no-conventional` is enough (about 17 minutes on the
+development machine). The last such comparison, on 2026-11-12 with the current tree on Windows 11 and
+PostgreSQL 16.14, was 180 of 180 identical. Identical hashes are expected on PostgreSQL 16.14; other
+PostgreSQL builds or configurations may change traces (e.g. lock behaviour), which should be reported, not
+hidden.
 
 ## 6. Reporting a reproduction
 

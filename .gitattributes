@@ -1,1 +1,3 @@
 evidence/** -text
+# shell scripts must keep LF line endings on every platform (bash fails on CRLF)
+*.sh text eol=lf

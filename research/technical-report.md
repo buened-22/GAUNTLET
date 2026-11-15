@@ -1,6 +1,7 @@
 # GAUNTLET: adversarial evaluation of database-migration code under concurrency, partial failure and retries
 
-Technical report, software version 0.4.0 (proposed), benchmark version 0.3.0. October 2026.
+Technical report, written for software version 0.4.0 (October 2026) and updated for the audit hardening
+released as 0.4.1 (November 2026). Benchmark version 0.3.0.
 Author-run research prototype; not independently reproduced or peer reviewed.
 
 ## Abstract
@@ -19,8 +20,11 @@ hand-written reference strategies on every run and kills each of eight hand-writ
 with its intended invariant. Four of the mutants pass the full conventional suite, and every re-run
 reproduced its schedule, trace and outcome hashes. The prototype adds differential testing, bounded
 systematic schedule exploration, failure minimization and experiment reports with hashed evidence
-manifests, plus a pipeline for external candidates. No AI coding agent has been evaluated, and no
-execution mode is yet a security boundary for untrusted code.
+manifests, plus a pipeline for external candidates. Validation uses hand-written references and mutants
+and labelled synthetic fixtures; beyond that, one candidate generated with Gemini has been evaluated once,
+inside a disconnected VM, as a demonstration: it failed one of six scenarios, violating a compatibility
+invariant under premature finalization ([gemini-attempt2-results.md](gemini-attempt2-results.md)). No study of
+any AI coding agent has been run. No execution mode is yet a security boundary for untrusted code.
 
 ## 1. Problem statement
 
@@ -193,11 +197,27 @@ in this failure class.
 * **`process` mode.** This is a development sandbox for trusted code:
   * a Windows Job Object (process count, memory and CPU limits);
   * an allow-listed environment and a per-actor workspace;
-  * a Python audit-hook guard;
-  * a per-run restricted PostgreSQL role, with access to other runs' databases revoked.
+  * a Python audit-hook guard, which is a tripwire for trusted code, not a control (plain Python can
+    switch it off);
+  * a per-run restricted PostgreSQL role, with access to other runs' databases revoked;
+  * since 0.4.1, a harness-owned database connection: the actor process
+    holds no connection or credentials, and the harness executes its SQL one statement per request, with
+    bounded results, after the controller grants it. This is tested from inside a sandboxed candidate
+    process but is not complete database isolation.
 
-  It does **not** prevent reading host files, including the oracle, opening network connections from
-  native code, or bypassing the guard.
+  It does **not** prevent candidate code from reading host files, including the oracle, switching off
+  the guard (plain Python suffices), reading the harness's environment or memory (same OS user), opening
+  network connections, or opening its own database connection with known or readable credentials. Withholding credentials from
+  the actor does not make it safe.
+* **Observation privileges (A-02).** In v0.4.0 the harness read the candidate-owned run database as a
+  PostgreSQL superuser, so objects the candidate creates could execute with superuser rights during a
+  snapshot. Since 0.4.1 it reads as a per-run non-superuser observer role
+  (pinned `search_path`, qualified names, plain-table checks) and uses a separate control connection to
+  the maintenance database. Superuser credentials remain in the harness.
+* **Timeout classification.** Since 0.4.1, a candidate statement that exceeds
+  the step timeout is classified `candidate_statement_timeout` only when the harness's evidence supports it
+  (no harness stall; the server executing it on CPU or in `pg_sleep` for the whole step; a clean cancel),
+  and `infrastructure` otherwise; never a pass. The rule is a heuristic.
 * **`strict` (container/VM) mode** is not implemented and fails closed. Without an explicit
   trusted-environment declaration, every entry point refuses to load a candidate.
 

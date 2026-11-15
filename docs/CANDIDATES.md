@@ -1,9 +1,10 @@
 # External candidates: contract, loader, isolation, evaluation
 
 This is the operator guide for evaluating a migration implementation produced outside GAUNTLET (for
-example by an AI coding agent). **No external AI coding agent has been evaluated yet.** The workflow has
-been exercised only with clearly labelled synthetic fixtures (`backend/tests/candidates/`), which are
-hand-adapted copies of reference A, not agent output. The controlled protocol for a real agent study is
+example by an AI coding agent). **No study of an AI coding agent has been run.** The workflow has been
+exercised with clearly labelled synthetic fixtures (`backend/tests/candidates/`), which are hand-adapted
+copies of reference A, not agent output, and once with a candidate generated with Gemini, evaluated inside a
+disconnected VM ([../research/gemini-attempt2-results.md](../research/gemini-attempt2-results.md)). The controlled protocol for a real agent study is
 in [AGENT_EVALUATION_PROTOCOL.md](AGENT_EVALUATION_PROTOCOL.md).
 
 ## 1. Candidate contract (version `1`)
@@ -32,6 +33,9 @@ Errors are distinguished as:
   this is ordinary behaviour judged by the oracle, not a crash;
 * **candidate execution failure** (`candidate_execution_failure`): the candidate's actor process died,
   broke the protocol, stopped responding after loading, or the candidate failed to load;
+* **candidate statement timeout** (`candidate_statement_timeout`): one of the candidate's statements
+  exceeded the step timeout and the harness's evidence attributes the delay to the statement itself (rule
+  and limits in [SECURITY_MODEL.md](SECURITY_MODEL.md)); without that evidence the run is `infrastructure`;
 * **timeout** / **limit_exceeded**: a configured limit was reached;
 * **infrastructure** / **isolation_unavailable** / **candidate_rejected**: the harness, the requested
   isolation or the snapshot check failed; the candidate was not (fully) executed.
@@ -88,14 +92,22 @@ None of the non-semantic outcomes is ever a pass.
 credentials or user variables); its own temporary working directory (also `TEMP`/`TMP`/`HOME`); the base
 interpreter with `-s`; on Windows a Job Object with kill-on-close, an active-process limit of 1 (no child
 processes), a memory limit (default 512 MB) and a CPU-time limit (default 120 s); on POSIX a process group
-with `RLIMIT_AS`/`RLIMIT_CPU` (not exercised here) and **no** process-count limit. Each run's isolation
+with `RLIMIT_AS`/`RLIMIT_CPU` (applied in the Linux CI runs, but no test verifies that they are enforced)
+and **no** process-count limit. Each run's isolation
 record states, per limit, whether and how it was enforced on that platform. Inside the actor, before candidate code is imported,
 an audit-hook guard denies writes outside the workspace, process creation, socket operations and ctypes.
-The actor connects to PostgreSQL as a per-run role that owns only its run database (not a superuser; no
-CREATEDB, CREATEROLE, REPLICATION or BYPASSRLS). CONNECT and TEMPORARY are revoked from PUBLIC on every run
-database (candidate and reference runs alike), so a candidate's role cannot connect to another run's
-database; it can still connect to the cluster's `postgres` maintenance database, where it has no
-privileges beyond PUBLIC defaults. Captured stderr is bounded
+The guard is a tripwire for trusted code, not a boundary: plain Python can switch most of it off (see
+[SECURITY_MODEL.md](SECURITY_MODEL.md)).
+The actor process holds no database connection, DSN or credentials. The harness owns each actor's
+connection and mediates the candidate's SQL through the request channel: one statement per request,
+executed only after the controller grants it, with results fetched within a row and byte budget. The
+harness connects as a per-run role that owns only its run database (not a superuser; no CREATEDB,
+CREATEROLE, REPLICATION or BYPASSRLS). CONNECT and TEMPORARY are revoked from PUBLIC on every run
+database (candidate and reference runs alike), so that role cannot connect to another run's database; it
+can still connect to the cluster's `postgres` maintenance database, where it has no privileges beyond
+PUBLIC defaults. This mediation is tested from inside a sandboxed candidate process
+(`backend/tests/test_audit_hardening_pg.py`); it is not complete database isolation, because candidate code
+can still open its own connection (see [SECURITY_MODEL.md](SECURITY_MODEL.md)). Captured stderr is bounded
 (default 1 MB, then counted only); protocol lines longer than 4 MiB are a protocol violation. At most two
 candidate runs execute concurrently (`GAUNTLET_MAX_CANDIDATE_RUNS`). The run's wall-clock limit is
 enforced by the watchdog; the run database, the role, the workspace and the job are removed on success,
@@ -103,10 +115,16 @@ failure, timeout and cancellation.
 
 **Not guaranteed by `process` mode:** OS-level read isolation (a candidate can read anything the host user
 can read, including this repository, the oracle source and the results databases); OS-level write
-isolation (the audit-hook guard denies Python-level writes outside the workspace, but native code running
-as the host user can write wherever that user can, including evidence files and other candidates'
+isolation (the audit-hook guard denies writes outside the workspace only until candidate code switches it
+off, which plain Python can do; code running as the host user can then write wherever that user can, including evidence files and other candidates'
 snapshots, although snapshot and evidence hashes would then fail verification); OS-level network
-isolation (native code can open sockets); protection against native code that defeats the audit hook.
+isolation (candidate code can open sockets once the guard is off); protection against candidate code that
+switches the audit hook off (plain Python suffices) or bypasses it with native code;
+protection of the harness's environment and memory (same OS user); prevention of a new database
+connection opened by candidate code with known or readable credentials. Withholding credentials from the actor
+does not make `process` mode safe. Snapshots of the run database are read by a per-run non-superuser
+observer role (audit finding A-02); a candidate that makes its database unobservable fails the run as a
+candidate execution failure ([SECURITY_MODEL.md](SECURITY_MODEL.md)).
 **Untrusted code, including any real AI-generated candidate, must not be run in `process` mode on a
 machine you care about.** Run it only inside a disposable VM until a verified `strict` backend exists.
 

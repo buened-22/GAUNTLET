@@ -1,48 +1,61 @@
 """Actor subprocess: hosts one implementation instance behind statement gates.
 
+The actor process has NO database connection, no DSN and no credentials (audit finding A-01). The harness
+process owns the actor's connection; the actor asks it to execute each statement and receives the result.
+
 Protocol (JSON lines; parent -> child on stdin, child -> parent on stdout):
 
-    parent -> {"type": "init", "impl", "dsn", "name", "lock_timeout_ms"}
-    child  -> {"type": "hello", "backend_pid": int, "os_pid": int}
+    parent -> {"type": "init", "impl", "name", "sandbox"?}
+    child  -> {"type": "hello", "os_pid": int}
     parent -> {"type": "op", "op_id": str, "method": str, "args": {...}}
-    child  -> {"type": "gate", "op_id", "seq", "sql", "params", "cls", "in_txn"}
-    parent -> {"type": "grant"}
-    child  -> {"type": "stmt_done", "op_id", "seq", "rowcount", "error"}
+    child  -> {"type": "gate", "op_id", "seq", "sql", "params"}          (params: gauntlet.actor.wire encoding)
+    parent -> {"type": "result", "seq", "rows", "rowcount", "error", "exception", "in_txn"}
+              (sent once the controller granted the statement and the harness executed it)
     ...
     child  -> {"type": "respond", "op_id", "outcome": {...}}
     parent -> {"type": "grant"}          (response delivered; or the parent kills us)
     parent -> {"type": "exit"}
 
-Every database statement (including BEGIN/COMMIT/ROLLBACK) waits for a grant,
-so the parent fully controls the interleaving of statements across actors.
-The child never decides scheduling. Implementation code runs only here,
-never in the harness or API process.
+Every database statement (including BEGIN/COMMIT/ROLLBACK) is executed by the harness only after the
+controller granted it, so the parent fully controls and records the interleaving of statements across
+actors. The statement class and the transaction status are determined by the harness, never reported by the
+actor. Implementation code runs only here, never in the harness or API process.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import traceback
 from contextlib import contextmanager
 from decimal import Decimal
 from typing import Any
 
-import psycopg
-from psycopg.rows import dict_row
-
+from gauntlet.actor import wire
 from gauntlet.impls.base import AppError
 
 
+# Leading whitespace and SQL comments are not part of the statement's verb.
+_LEADING = re.compile(r"\A(?:\s+|--[^\n]*(?:\n|\Z)|/\*.*?\*/)*", re.S)
+_WRITE_WORD = re.compile(r"\b(?:INSERT|UPDATE|DELETE|MERGE)\b")
+
+
 def classify(sql: str) -> str:
-    head = sql.lstrip().split(None, 1)[0].upper() if sql.strip() else ""
+    """Statement class used for fault points (``before_write``) and the trace (computed by the harness).
+
+    A misclassified write would silently skip a ``before_write`` fault, so unknown statements that can modify
+    data (MERGE, CALL, DO, COPY) count as writes. Every statement recorded in the frozen evidence keeps its
+    class (``tests/test_audit_hardening.py``)."""
+    body = _LEADING.sub("", sql, count=1)
+    m = re.match(r"[A-Za-z]+", body)
+    head = m.group(0).upper() if m else ""
     if head == "SELECT":
         return "read"
     if head == "WITH":
-        upper = sql.upper()
-        return "write" if any(k in upper for k in ("INSERT ", "UPDATE ", "DELETE ")) else "read"
-    if head in ("INSERT", "UPDATE", "DELETE"):
+        return "write" if _WRITE_WORD.search(body.upper()) else "read"
+    if head in ("INSERT", "UPDATE", "DELETE", "MERGE", "CALL", "DO", "COPY"):
         return "write"
     if head in ("ALTER", "CREATE", "DROP", "TRUNCATE"):
         return "ddl"
@@ -65,6 +78,23 @@ def _jsonable(v: Any) -> Any:
     return v
 
 
+class DbError(Exception):
+    """A database error reported by the harness for a statement this actor issued."""
+
+    def __init__(self, sqlstate: str | None, message: str):
+        super().__init__(message)
+        self.sqlstate = sqlstate
+        self.message = message
+
+
+class StatementException(Exception):
+    """A non-database error raised while the harness executed the statement (e.g. unadaptable parameters)."""
+
+    def __init__(self, type_name: str, message: str):
+        super().__init__(message)
+        self.type_name = type_name
+
+
 class Channel:
     def __init__(self) -> None:
         self._in = sys.stdin
@@ -83,45 +113,45 @@ class Channel:
         return json.loads(line)
 
 
-class GatedDb:
-    """The ``Db`` handed to implementations. Each statement waits for a grant."""
+class _Result:
+    def __init__(self, rows: list[dict] | None, rowcount: int | None):
+        self.rows = rows
+        self.rowcount = rowcount
 
-    def __init__(self, conn: psycopg.Connection, chan: Channel):
-        self._conn = conn
+
+class GatedDb:
+    """The ``Db`` handed to implementations: a request channel to the harness, which owns the connection."""
+
+    def __init__(self, chan: Channel):
         self._chan = chan
         self.op_id: str | None = None
         self._seq = 0
+        self._in_txn_flag = False  # as reported by the harness after the last statement
 
     def _in_txn(self) -> bool:
-        return self._conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE
+        return self._in_txn_flag
 
-    def _run(self, sql: str, params: Any = None):
+    def _run(self, sql: str, params: Any = None) -> _Result:
+        if not isinstance(sql, str):
+            raise TypeError("sql must be a string")
         self._seq += 1
         seq = self._seq
-        self._chan.send({
-            "type": "gate", "op_id": self.op_id, "seq": seq,
-            "sql": " ".join(sql.split()), "params": _jsonable(params),
-            "cls": classify(sql), "in_txn": self._in_txn(),
-        })
+        self._chan.send({"type": "gate", "op_id": self.op_id, "seq": seq, "sql": sql,
+                         "params": wire.encode(params)})
         msg = self._chan.recv()
-        if msg.get("type") != "grant":
-            raise RuntimeError(f"protocol violation: expected grant, got {msg}")
-        cur = self._conn.cursor(row_factory=dict_row)
-        try:
-            cur.execute(sql, params)
-        except psycopg.Error as exc:
-            self._chan.send({
-                "type": "stmt_done", "op_id": self.op_id, "seq": seq, "rowcount": None,
-                "error": {"sqlstate": exc.sqlstate, "message": str(exc).strip().splitlines()[0] if str(exc) else ""},
-            })
-            raise
-        self._chan.send({"type": "stmt_done", "op_id": self.op_id, "seq": seq,
-                         "rowcount": cur.rowcount, "error": None})
-        return cur
+        if msg.get("type") != "result" or msg.get("seq") != seq:
+            raise RuntimeError(f"protocol violation: expected the result of statement {seq}, got {msg}")
+        self._in_txn_flag = bool(msg.get("in_txn"))
+        if msg.get("error") is not None:
+            raise DbError(msg["error"].get("sqlstate"), msg["error"].get("message", ""))
+        if msg.get("exception") is not None:
+            raise StatementException(msg["exception"].get("type", "Exception"), msg["exception"].get("message", ""))
+        rows = msg.get("rows")
+        return _Result(wire.decode(rows) if rows is not None else None, msg.get("rowcount"))
 
     def query(self, sql: str, params: Any = None) -> list[dict]:
-        cur = self._run(sql, params)
-        return cur.fetchall() if cur.description else []
+        res = self._run(sql, params)
+        return res.rows if res.rows is not None else []
 
     def one(self, sql: str, params: Any = None) -> dict | None:
         rows = self.query(sql, params)
@@ -136,10 +166,10 @@ class GatedDb:
         try:
             yield
         except BaseException:
-            if self._in_txn() and not self._conn.closed:
+            if self._in_txn():
                 try:
                     self._run("ROLLBACK")
-                except psycopg.Error:
+                except DbError:
                     pass
             raise
         else:
@@ -147,7 +177,7 @@ class GatedDb:
 
     def ensure_idle(self) -> None:
         """Roll back a transaction an implementation left open after an error."""
-        if self._in_txn() and not self._conn.closed:
+        if self._in_txn():
             self._run("ROLLBACK")
 
 
@@ -160,23 +190,17 @@ def main() -> None:
     if init.get("type") != "init":
         chan.send({"type": "fatal", "error": f"expected init, got {init}"})
         return
-    # The harness's own connection is opened before the implementation is loaded (an external candidate's
-    # sandbox guard is installed during loading and must not affect the harness connection).
-    conn = psycopg.connect(init["dsn"], autocommit=True, application_name=f"gauntlet:{init['name']}")
-    conn.execute(f"SET lock_timeout = {int(init['lock_timeout_ms'])}")
     try:
         impl = load_implementation(init["impl"], init.get("sandbox"))
     except Exception as exc:  # e.g. a candidate that fails to import: report, never run
         chan.send({"type": "fatal", "error": f"could not load implementation: {type(exc).__name__}: {exc}"})
-        conn.close()
         return
-    chan.send({"type": "hello", "backend_pid": conn.info.backend_pid, "os_pid": os.getpid()})
-    db = GatedDb(conn, chan)
+    chan.send({"type": "hello", "os_pid": os.getpid()})
+    db = GatedDb(chan)
 
     while True:
         msg = chan.recv()
         if msg["type"] == "exit":
-            conn.close()
             return
         if msg["type"] != "op":
             chan.send({"type": "fatal", "error": f"unexpected message {msg}"})
@@ -192,22 +216,24 @@ def main() -> None:
                 outcome = {"status": "ok", "result": _jsonable(result)}
             except AppError as exc:
                 outcome = {"status": "error", "error": {"kind": "app", "code": exc.code, "message": exc.message}}
-            except psycopg.Error as exc:
+            except DbError as exc:
                 outcome = {"status": "error", "error": {"kind": "db", "code": "db_error",
-                                                         "sqlstate": exc.sqlstate,
-                                                         "message": str(exc).strip().splitlines()[0] if str(exc) else ""}}
+                                                         "sqlstate": exc.sqlstate, "message": exc.message}}
+            except StatementException as exc:
+                outcome = {"status": "error", "error": {"kind": "exception", "code": exc.type_name,
+                                                         "message": str(exc),
+                                                         "traceback": traceback.format_exc(limit=5)}}
             except Exception as exc:  # implementation bug (not harness): still a client-visible error
                 outcome = {"status": "error", "error": {"kind": "exception", "code": type(exc).__name__,
                                                          "message": str(exc),
                                                          "traceback": traceback.format_exc(limit=5)}}
             try:
                 db.ensure_idle()
-            except psycopg.Error:
+            except DbError:
                 pass
         chan.send({"type": "respond", "op_id": db.op_id, "outcome": outcome})
         grant = chan.recv()
         if grant.get("type") == "exit":
-            conn.close()
             return
         db.op_id = None
 

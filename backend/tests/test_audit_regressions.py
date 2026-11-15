@@ -192,7 +192,7 @@ def test_modified_or_missing_evidence_is_detected(tmp_path):
 def client(tmp_path):
     st = Store(tmp_path / "api.sqlite3")
     with TestClient(create_app(store=st, executor=ThreadPoolExecutor(max_workers=1),
-                               jobs=ThreadPoolExecutor(max_workers=1))) as c:
+                               jobs=ThreadPoolExecutor(max_workers=1)), base_url="http://127.0.0.1:8000") as c:
         c.store = st
         yield c
 

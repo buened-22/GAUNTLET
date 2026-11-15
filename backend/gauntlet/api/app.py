@@ -1,5 +1,8 @@
 """FastAPI backend. Runs execute on a single background worker (one at a time);
-implementation code runs only inside actor subprocesses, never in this process."""
+implementation code runs only inside actor subprocesses, never in this process.
+
+The API has no authentication and is for local use only. ``gauntlet.api.local_guard`` refuses requests that
+are not addressed to a loopback name or that come from a foreign web origin."""
 
 from __future__ import annotations
 
@@ -21,6 +24,7 @@ from gauntlet.faults import FAULTS
 from gauntlet.impls.registry import IMPLEMENTATIONS, get_info
 from gauntlet.oracle.invariants import INVARIANTS
 from gauntlet.api.analyses import API_RUN_TIME_LIMIT_S, register as register_analyses
+from gauntlet.api.local_guard import LocalRequestGuard, allowed_origins
 from gauntlet.pg.provision import InfrastructureError, check_server
 from gauntlet.report import benchmark_report, run_report
 from gauntlet.scenarios.catalog import SCENARIOS
@@ -50,8 +54,10 @@ class RunRequest(BaseModel):
 def create_app(store: Store | None = None, executor: ThreadPoolExecutor | None = None,
                jobs: ThreadPoolExecutor | None = None) -> FastAPI:
     app = FastAPI(title="Gauntlet API", version=BENCHMARK_VERSION)
-    app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-                       allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(CORSMiddleware, allow_origins=allowed_origins(), allow_methods=["*"], allow_headers=["*"])
+    # Added last, so it runs first: a request relayed by a web page in the operator's browser (DNS rebinding,
+    # cross-site request) is refused before it reaches CORS handling or any route (gauntlet.api.local_guard).
+    app.add_middleware(LocalRequestGuard)
     app.state.store = store or Store()
     app.state.executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="gauntlet-run")
     app.state.active: dict[str, str] = {}

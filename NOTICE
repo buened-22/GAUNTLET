@@ -1,0 +1,10 @@
+GAUNTLET
+Copyright 2026 Snigdha Tantipudi
+
+This product is licensed under the Apache License, Version 2.0. A copy of the
+license is in the file LICENSE.
+
+This repository contains no source code copied from third-party projects.
+GAUNTLET depends on separately installed third-party software, which is not
+distributed with it and remains under its own licenses. Those dependencies and
+their licenses are listed in docs/THIRD_PARTY.md.

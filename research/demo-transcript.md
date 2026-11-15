@@ -1,10 +1,18 @@
-# Captured demo transcript (fallback)
+# Captured demo transcript: v0.4.0 release review (older fallback)
 
-Output of the documented demonstration ([docs/DEMO.md](../docs/DEMO.md) steps 4–8), captured on 2026-10-22 during
-the v0.4.0 release review: Windows 11, Python 3.14.0, PostgreSQL 16.14, run from `backend/` against a scratch
-copy of the v0.3.0 evidence database. Local paths are replaced by `<scratch>`; nothing else was edited.
-Run ids are fresh identifiers and differ on every execution; hashes of the same configuration do not.
-The candidate is the labelled synthetic fixture `synthetic_stale_backfill`, not AI-generated code.
+> **Historical capture.** This is the output of the documented demonstration captured on **2026-10-22 during
+> the v0.4.0 release review** (tag `v0.4.0`, commit `be9b742`). It is **not** a rehearsal of the current
+> audit-hardening HEAD `2a73551`, and it predates the A-01, FR-3 and A-02 changes. It is kept unchanged as a
+> fallback for the demo. For the rehearsal of `2a73551` (2026-11-05) see
+> [demo-readiness-report.md](demo-readiness-report.md) §1: it produced the same classifications, counts,
+> minimization reduction and replay hashes as below, with different run ids, and a different harness revision
+> in the candidate summary's provenance line.
+
+Output of [docs/DEMO.md](../docs/DEMO.md) steps 4–8 at v0.4.0: Windows 11, Python 3.14.0, PostgreSQL 16.14, run
+from `backend/` against a scratch copy of the v0.3.0 evidence database. Local paths are replaced by
+`<scratch>`; nothing else was edited. Run ids are fresh identifiers and differ on every execution; hashes of
+the same configuration do not. The candidate is the labelled synthetic fixture `synthetic_stale_backfill`,
+not AI-generated code.
 
 ```text
 # step 4: differential

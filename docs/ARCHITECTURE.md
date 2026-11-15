@@ -11,7 +11,7 @@
                         │     • grants one SQL statement at a time ──────────────┐                  │
                         │     • injects faults (pause / kill / drop response)    │ JSON-lines pipes │
                         │     • appends to Ledger (client view) and event trace  │                  │
-                        │     • monitor connection: pg_blocking_pids, snapshots  │                  │
+                        │     • monitor connection: pg_blocking_pids, snapshots* │                  │
                         │            │                                            │                 │
                         │            ▼                                            ▼                 │
                         │   RunOracle (oracle/) ◄── ledger + raw snapshots   ActorProxy × N         │
@@ -22,13 +22,18 @@
                         └─────────────────────────────────────────────────────────┼─────────────────┘
                                                                                   │
                     ┌─────────────── actor subprocess (one per actor incarnation) ▼──────────────┐
-                    │ actor/child.py: loads the implementation by id, owns one psycopg           │
-                    │ connection, and wraps it in GatedDb. Every statement waits for "grant".    │
+                    │ actor/child.py: loads the implementation by id; GatedDb is only a          │
+                    │ request channel. The actor has NO database connection: the harness         │
+                    │ (actor/connection.py) executes each statement after it is granted.         │
                     │ Implementation code (impls/*) runs ONLY here.                               │
                     └──────────────────────────────────────┬─────────────────────────────────────┘
                                                            ▼
                                   PostgreSQL 16, one fresh database per run
 ```
+
+\* For external candidates (audit finding A-02), snapshots are read by a per-run non-superuser observer role,
+and `pg_blocking_pids`, liveness checks and backend termination run on a separate control connection to the
+maintenance database; see [SECURITY_MODEL.md](SECURITY_MODEL.md).
 
 The FastAPI app (`api/app.py`) wraps the same runner. It runs one execution at a time on a
 background worker and reads persisted results. The React dashboard (`frontend/`) only talks to the
@@ -88,9 +93,11 @@ schedule discriminates a single-transaction reference from a two-transaction mut
 knowing either one's code. The trade-off is granularity. Interleavings inside a single statement,
 for example inside a trigger, are not explored.
 
-**A separate OS process per actor.** Crashes are real process kills, and PostgreSQL observes a
-dropped connection and rolls back. It also means implementation code never runs in the harness or
-API process, which is the isolation boundary needed later for externally generated solutions. The
+**A separate OS process per actor.** Crashes are real process kills; the harness then ends that actor's
+database session (it owns the connection), so PostgreSQL rolls back exactly as for a dropped connection. It also means implementation code never runs in the harness or
+API process. That separation is a prerequisite for isolating externally generated solutions, but it is
+**not** itself a security boundary: an actor process runs as the same operating-system user as the harness
+(see [SECURITY_MODEL.md](SECURITY_MODEL.md)). The
 trade-off is about 1.4 s of Python start-up per process on Windows, mitigated by the warm pool.
 
 **Logical lock-wait detection.** A statement is classified as *blocked* when

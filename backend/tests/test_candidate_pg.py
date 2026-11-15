@@ -191,6 +191,13 @@ def test_evaluation_workflow_end_to_end_and_no_overwrite(env):
     md = res["summary_markdown"]
     assert register(BAD)["source_hash"] in md and "NOT a security boundary" in md and "not exhaustive within the bounds" in md
     assert "Producer (as claimed in the manifest, not verified)" in md
+    # the isolation section lists the audit controls (A-01, A-02) and the gaps they leave
+    applied = next(line for line in md.splitlines() if line.startswith("* Applied: "))
+    gaps = next(line for line in md.splitlines() if line.startswith("* Not enforced: "))
+    assert "harness-owned database connection (A-01)" in applied and "observer role (A-02)" in applied
+    assert "environment and memory" in gaps and "new database connection opened by candidate code" in gaps
+    assert "disabling the audit-hook guard (plain Python suffices)" in gaps
+    assert "Strict (container) isolation on this host:" in md and "not implemented" in md
     stored_first = json.dumps(st.get_analysis(first["id"])["result"], sort_keys=True)
     second = evaluate(st, cid, **{**kw, "explore_cfg": False, "minimize_cfg": False})
     assert second["id"] != first["id"]

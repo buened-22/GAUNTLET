@@ -10,7 +10,9 @@ Hypotheses, variables and threats to validity. For how experiments are executed 
 > recovery guarantees under previously unseen combinations of concurrency, partial failure, retries and
 > interrupted execution?
 
-This prototype does **not** answer that question yet: no AI agent has been evaluated. What it builds
+This prototype does **not** answer that question yet: no study of an AI agent has been run (one
+Gemini-generated candidate has been evaluated once, as a demonstration:
+[../research/gemini-attempt2-results.md](../research/gemini-attempt2-results.md)). What it builds
 and validates is the *instrument* needed to answer it:
 
 1. a task family with a precise correctness specification;

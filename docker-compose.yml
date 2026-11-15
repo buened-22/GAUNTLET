@@ -1,6 +1,6 @@
 # PostgreSQL 16 for Gauntlet integration runs.
-# NOTE: this file could not be tested on the development machine (Docker was
-# not installed there); the no-Docker path is `python -m gauntlet pg install|init|start`.
+# Docker was not installed on the development machine; this file is exercised by the Linux
+# continuous-integration jobs. The no-Docker path is `python -m gauntlet pg install|init|start`.
 # The service listens on the same port and credentials as the local cluster,
 # so GAUNTLET_PG_DSN's default works with either.
 services:

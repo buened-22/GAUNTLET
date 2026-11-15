@@ -21,7 +21,7 @@ from typing import Any
 import psycopg
 
 from gauntlet.actor.proxy import ActorProxy, ActorState, ProcessPool
-from gauntlet.engine.observe import backend_alive, blocking_pids, capture
+from gauntlet.engine.observe import ObservationObstructed, backend_activity, backend_alive, blocking_pids, capture
 from gauntlet.oracle.ledger import Completion, Invocation, Ledger
 from gauntlet.pg.provision import InfrastructureError
 
@@ -42,11 +42,18 @@ class ScheduleError(InfrastructureError):
 
 class Controller:
     def __init__(self, impl_id: str, dsn: str, monitor: psycopg.Connection, ops: dict[str, dict],
-                 pool: ProcessPool | None = None, deadline: float | None = None, max_events: int | None = None):
+                 pool: ProcessPool | None = None, deadline: float | None = None, max_events: int | None = None,
+                 control: psycopg.Connection | None = None):
         self.impl_id = impl_id
         self.pool = pool or ProcessPool()
         self.dsn = dsn
+        # ``monitor`` reads snapshots of the run database. ``control`` (cluster-wide lock probe, liveness,
+        # backend termination, statement activity) defaults to the same connection. For external candidates the
+        # runner passes a restricted observer as ``monitor`` and a separate control connection that never
+        # connects to the run database (audit finding A-02).
         self.monitor = monitor
+        self.control = control if control is not None else monitor
+        self.restricted_observer = control is not None
         self.ops = ops  # logical_id -> {op, args, role}
         self.ledger = Ledger()
         self.events: list[dict] = []
@@ -66,6 +73,11 @@ class Controller:
         # Interleaving decisions per interleave directive (index -> list of steps). Kept outside the
         # event trace so recording them does not change trace hashes.
         self.decisions: dict[int, list[dict]] = {}
+        # Every statement executed on any actor connection, client and protocol operations alike, in execution
+        # order (audit finding A-01). Client statements also appear in the event trace; protocol statements
+        # (instance registration) do not, so that trace hashes stay comparable with recorded evidence. Kept
+        # outside the event trace for the same reason.
+        self.statement_log: list[dict] = []
         self.deadline = deadline  # time.monotonic() value, or None
         self.max_events = max_events
 
@@ -82,10 +94,26 @@ class Controller:
 
     # -- actor lifecycle -------------------------------------------------------
     def _probe(self, pid: int) -> list[int]:
-        return blocking_pids(self.monitor, pid)
+        return blocking_pids(self.control, pid)
+
+    def _terminate_backend(self, pid: int) -> None:
+        """End an actor's database session while one of its statements is still running (crash emulation:
+        the harness, not the actor process, owns the connection)."""
+        self.control.execute("SELECT pg_catalog.pg_terminate_backend(%s)", (pid,))
+
+    def _activity(self, pid: int) -> dict | None:
+        """The server's view of an actor's backend (evidence when a statement exceeds the step timeout)."""
+        return backend_activity(self.control, pid)
+
+    def _log_statement(self, actor: str, gate) -> None:
+        self.statement_log.append({"after_seq": self._seq, "actor": actor, "op_id": gate.op_id, "seq": gate.seq,
+                                   "sql": gate.sql, "params": gate.params, "cls": gate.cls})
 
     def _spawn(self, actor: str, role: str) -> None:
-        proxy = self.actors.get(actor) or ActorProxy(actor, role, self.impl_id, self.dsn, self._probe, self.pool)
+        proxy = self.actors.get(actor) or ActorProxy(actor, role, self.impl_id, self.dsn, self._probe, self.pool,
+                                                     terminate_backend=self._terminate_backend,
+                                                     on_execute=self._log_statement,
+                                                     activity_probe=self._activity)
         self.actors[actor] = proxy
         proxy.spawn()
         proxy.wait_hello()
@@ -263,9 +291,9 @@ class Controller:
         # any open transaction) so later steps see a settled state.
         if pid is not None:
             deadline = time.monotonic() + 10
-            while backend_alive(self.monitor, pid):
+            while backend_alive(self.control, pid):
                 if time.monotonic() > deadline:
-                    self.monitor.execute("SELECT pg_terminate_backend(%s)", (pid,))
+                    self._terminate_backend(pid)
                     self.notes.append(f"backend {pid} of crashed {actor} had to be terminated by the harness")
                     break
                 time.sleep(0.01)
@@ -433,7 +461,20 @@ class Controller:
         self._snapshot(d["label"])
 
     def _snapshot(self, label: str) -> int:
-        state = capture(self.monitor)
+        try:
+            state = capture(self.monitor)
+        except psycopg.errors.LockNotAvailable as exc:  # an actor paused while holding a lock: a deadlock
+            raise InfrastructureError(f"snapshot '{label}' could not read the database: a lock held by a paused "
+                                      f"actor did not become free ({exc.sqlstate})") from exc
+        except (psycopg.errors.InsufficientPrivilege, psycopg.errors.UndefinedTable) as exc:
+            if not self.restricted_observer:
+                raise
+            # The candidate owns the observed objects: it revoked the observer's access, enabled row-level
+            # security (an error under row_security = off, never silent filtering) or removed a table.
+            raise ObservationObstructed(f"snapshot '{label}' could not read the database as the harness's "
+                                        f"observer ({exc.sqlstate}: {str(exc).strip().splitlines()[0][:200]})") from exc
+        except ObservationObstructed as exc:
+            raise ObservationObstructed(f"snapshot '{label}': {exc}") from exc
         seq = self._event("snapshot", None, label=label, index=len(self.snapshots))
         self.snapshots.append({"label": label, "seq": seq, **state})
         return len(self.snapshots) - 1
@@ -471,22 +512,34 @@ class Controller:
         self.aborted = True
         for proxy in list(self.actors.values()):
             try:
-                if proxy.child:
-                    proxy.child.kill()
+                proxy.abort()  # kills the process and cancels a running statement; never closes the connection
+            except Exception:  # noqa: BLE001
+                pass
+        for conn in {id(c): c for c in (self.monitor, self.control)}.values():
+            try:
+                conn.cancel_safe()
             except Exception:
                 pass
-        try:
-            self.monitor.cancel_safe()
-        except Exception:
-            pass
 
     def shutdown(self) -> None:
-        for proxy in self.actors.values():
+        """Stop every actor and the pool. A failure while stopping one actor never prevents stopping the
+        others or closing the pool; failures that remain after a hard kill are recorded in ``notes``."""
+        try:
+            for proxy in list(self.actors.values()):
+                try:
+                    if proxy.state != ActorState.DEAD:
+                        proxy.exit()
+                    elif proxy.child is not None:
+                        proxy.child.release()  # sandboxed actors: remove workspace / job (no-op otherwise)
+                except Exception:  # noqa: BLE001
+                    try:
+                        proxy.kill()
+                    except Exception as exc:  # noqa: BLE001
+                        self.notes.append(f"cleanup: could not stop actor {proxy.name}: {type(exc).__name__}: {exc}")
+        finally:
             try:
-                if proxy.state != ActorState.DEAD:
-                    proxy.exit()
-                elif proxy.child is not None:
-                    proxy.child.release()  # sandboxed actors: remove workspace / job (no-op otherwise)
-            except Exception:
-                proxy.kill()
-        self.pool.close()
+                self.pool.close()
+            except Exception as exc:  # noqa: BLE001 - the run's observations are complete; record, don't mask
+                self.notes.append(f"cleanup: could not close the actor pool: {type(exc).__name__}: {exc}")
+            for proxy in list(self.actors.values()):  # connections that could not be shut down, during or after the run
+                self.notes += [f"cleanup: {e}" for e in getattr(proxy, "cleanup_errors", [])]

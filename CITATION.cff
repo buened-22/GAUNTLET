@@ -1,11 +1,13 @@
 cff-version: 1.2.0
 message: >-
   If you use GAUNTLET, please cite it as below. GAUNTLET is a research prototype; its results concern
-  hand-written reference implementations, mutants and synthetic fixtures only (no AI coding agent has
-  been evaluated) and have not been independently reproduced.
+  hand-written reference implementations, mutants and synthetic fixtures (beyond one demonstration run of a
+  single Gemini-generated candidate, no AI coding agent has been evaluated) and have not been independently
+  reproduced.
 type: software
 title: "GAUNTLET: adversarial evaluation of database-migration code under concurrency, partial failure and retries"
-version: "0.4.0"
+version: "0.4.1"
+date-released: "2026-11-16"
 license: Apache-2.0
 authors:
   - family-names: Tantipudi

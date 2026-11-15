@@ -1,8 +1,8 @@
-# Release v0.4.0 (proposed): notes and publication checklist
+# Release v0.4.0: notes and publication checklist
 
-**Status: draft. Nothing has been committed, tagged, pushed or published.** The owner chose the Apache
-License 2.0 (`LICENSE`). The version number, the commit and the publication itself still require the
-owner's approval.
+**Status: released** as the annotated tag `v0.4.0` (commit `be9b742`) under the Apache License 2.0
+(`LICENSE`). The verification results below are the release review of 2026-10-22 and describe that tagged
+tree. Later, unreleased audit hardening is summarized in the README's release history.
 
 ## Release title
 

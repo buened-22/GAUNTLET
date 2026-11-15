@@ -16,14 +16,24 @@ Modes
     RLIMIT_AS and RLIMIT_CPU, and the whole group is killed on termination; the process-count limit is NOT
     enforced on POSIX (this path has not been exercised in the development environment);
   * inside the actor, before candidate code is imported, a Python audit-hook guard (``guard.py``)
-    denies writes outside the workspace, process creation, socket operations and FFI (ctypes);
-  * the actor connects to PostgreSQL as a per-run role that owns only its run database (not a
-    superuser, no CREATEDB / CREATEROLE), with CONNECT revoked from PUBLIC on that database.
+    denies writes outside the workspace, process creation, socket operations, FFI (ctypes) and importing
+    the database driver. It is a tripwire for trusted code, not a control: plain Python can switch most of
+    it off, and native code can bypass it (audit finding F-02);
+  * the actor process is given no database connection, DSN or credentials (audit finding A-01): the harness
+    owns the connection and executes each requested statement (one per request, bounded results) after
+    the controller grants it, as a per-run role that owns only its run database (not a superuser, no
+    CREATEDB / CREATEROLE), with CONNECT revoked from PUBLIC on that database;
+  * the harness reads snapshots of the run database as a per-run non-superuser observer role (audit
+    finding A-02), and runs lock probes and backend termination on an admin-role connection to the admin
+    DSN's database (the maintenance database by default), so no superuser session opens in the run database.
 
   Not enforced: OS-level file-system read isolation (a candidate can read files the host user can
-  read, including this repository), OS-level network blocking (native code can still open sockets),
-  and protection against a candidate that defeats the audit hook from native code. Use ``strict``
-  (once implemented) or an external VM for genuinely untrusted code.
+  read, including this repository), OS-level network blocking (candidate code can open sockets once the
+  guard is off), protection against a candidate that switches the audit hook off (plain Python suffices)
+  or bypasses it with native code, protection of the harness process's environment and memory (same OS
+  user; they hold the PostgreSQL admin credentials), and prevention of a new database connection opened
+  by candidate code with credentials it knows or can read.
+  Use ``strict`` (once implemented) or an external VM for genuinely untrusted code.
 """
 
 from __future__ import annotations
@@ -129,11 +139,24 @@ def check(config: IsolationConfig) -> dict:
             "operator_declared_trusted_environment": True,
             "controls": ["allow-listed environment (no host secrets)", "per-actor temporary workspace",
                          caps["process"]["process_tree_control"], caps["process"]["resource_limits"],
-                         "audit-hook guard: no writes outside workspace, no process creation, no sockets, no ctypes",
-                         "per-run PostgreSQL role (owner of its run database only; not superuser)"],
+                         "audit-hook guard (a tripwire for trusted code, not a control: plain Python can switch it off): no writes outside workspace, no process creation, "
+                         "no sockets, no ctypes, no database-driver imports",
+                         "harness-owned database connection (A-01): the actor process is given no connection, DSN or "
+                         "credentials; each request is one SQL statement, executed by the harness after the controller "
+                         "grants it, with bounded results",
+                         "per-run PostgreSQL role for the candidate's statements (owner of its run database only; "
+                         "not superuser)",
+                         "snapshot reads by a per-run non-superuser observer role (A-02); lock probes and backend "
+                         "termination on an admin-role connection to the admin DSN's database (the maintenance database "
+                         "by default), never to the run database; no superuser session in the run database"],
             "not_enforced": ["OS-level read isolation (host files readable by the host user remain readable)",
-                             "OS-level network isolation (native code can open sockets)",
-                             "protection against native code defeating the audit-hook guard"],
+                             "OS-level network isolation (candidate code can open sockets once the guard is off)",
+                             "protection against candidate code disabling the audit-hook guard (plain Python "
+                             "suffices) or bypassing it with native code",
+                             "protection of the harness process's environment and memory (same OS user; they hold "
+                             "the PostgreSQL admin credentials)",
+                             "prevention of a new database connection opened by candidate code with credentials it "
+                             "knows or can read"],
             "warning": "process mode is a development sandbox, NOT a security boundary"}
 
 
@@ -191,6 +214,10 @@ if sys.platform.startswith("win"):
 
     class _Job:
         def __init__(self, cfg: IsolationConfig):
+            # The watchdog thread and the controller thread can both terminate / close the same job: the lock
+            # guarantees the handle is closed exactly once (a second CloseHandle could close an unrelated,
+            # reused handle value).
+            self._lock = threading.Lock()
             self.handle = _k32.CreateJobObjectW(None, None)
             if not self.handle:
                 raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
@@ -218,13 +245,15 @@ if sys.platform.startswith("win"):
                 _k32.CloseHandle(h)
 
         def terminate(self) -> None:
-            if self.handle:
-                _k32.TerminateJobObject(self.handle, 1)
+            with self._lock:
+                if self.handle:
+                    _k32.TerminateJobObject(self.handle, 1)
 
         def close(self) -> None:
-            if self.handle:
-                _k32.CloseHandle(self.handle)  # kill-on-close: anything still in the job dies
-                self.handle = None
+            with self._lock:
+                h, self.handle = self.handle, None
+            if h:
+                _k32.CloseHandle(h)  # kill-on-close: anything still in the job dies
 
 
 # -- per-actor sandbox -----------------------------------------------------------------------------
@@ -252,6 +281,7 @@ class ActorSandbox:
         self._pythonpath = os.pathsep.join([pythonpath, *extra])
         self._job = None
         self.events: list[str] = []
+        self._lock = threading.RLock()  # kill_tree / cleanup may run on the watchdog and controller threads
 
     def env(self) -> dict:
         env = {k: os.environ[k] for k in ENV_ALLOWLIST if k in os.environ}
@@ -282,24 +312,26 @@ class ActorSandbox:
         return subprocess.Popen(argv, env=self.env(), cwd=self.workspace, preexec_fn=limits, **kw)
 
     def kill_tree(self, proc: subprocess.Popen) -> None:
-        if sys.platform.startswith("win"):
-            if self._job:
-                self._job.terminate()
-        else:  # pragma: no cover - POSIX only
-            try:
-                os.killpg(proc.pid, 9)
-            except OSError:
-                pass
+        with self._lock:
+            if sys.platform.startswith("win"):
+                if self._job:
+                    self._job.terminate()
+            else:  # pragma: no cover - POSIX only
+                try:
+                    os.killpg(proc.pid, 9)
+                except OSError:
+                    pass
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
 
     def cleanup(self) -> None:
-        if self._job:
-            self._job.close()
-            self._job = None
-        shutil.rmtree(self.workspace, ignore_errors=True)
+        with self._lock:
+            job, self._job = self._job, None
+            if job:
+                job.close()
+            shutil.rmtree(self.workspace, ignore_errors=True)
 
 
 _slots_lock = threading.Lock()

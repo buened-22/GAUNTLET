@@ -117,7 +117,7 @@ def test_api_entry_points_cannot_bypass_the_gate(env, sandbox_counter):
     cid = impl.split(":", 1)[1]
     st = env["store"]
     with TestClient(create_app(store=st, executor=ThreadPoolExecutor(max_workers=1),
-                               jobs=ThreadPoolExecutor(max_workers=1))) as c:
+                               jobs=ThreadPoolExecutor(max_workers=1)), base_url="http://127.0.0.1:8000") as c:
         assert c.post("/api/runs", json={"scenario_id": F01, "impl_id": impl, "seed": 1}).status_code == 422
         ids = [c.post("/api/differential", json={"impl_ids": ["ref_a_trigger", impl], "scenario_id": F01}).json()["id"],
                c.post("/api/explorations", json={"scenario_id": F01, "impl_id": impl, "limits": {"max_schedules": 2}}).json()["id"],
@@ -249,7 +249,7 @@ def test_internal_error_is_reported_as_error_never_completed(env, monkeypatch):
     monkeypatch.setattr(ev, "run_differential", boom)
     st = env["store"]
     with TestClient(create_app(store=st, executor=ThreadPoolExecutor(max_workers=1),
-                               jobs=ThreadPoolExecutor(max_workers=1))) as c:
+                               jobs=ThreadPoolExecutor(max_workers=1)), base_url="http://127.0.0.1:8000") as c:
         eid = c.post("/api/evaluations", json={"candidate_id": cid, "scenarios": [F01], "isolation": TRUSTED,
                                                "explore": None, "minimize_max_attempts": None}).json()["id"]
         deadline = time.time() + 60

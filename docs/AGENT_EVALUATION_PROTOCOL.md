@@ -1,6 +1,8 @@
 # Protocol: evaluating externally generated migration implementations
 
-Status: **protocol defined; no agent has been evaluated.** Nothing in this repository is agent output.
+Status: **protocol defined; no study has been run.** Nothing in this repository is agent output. One
+candidate generated with Gemini was evaluated once as a pipeline demonstration, outside this protocol (one
+attempt, no pre-registered plan): [../research/gemini-attempt2-results.md](../research/gemini-attempt2-results.md).
 This document fixes the design before any data exists, so that later deviations can be recorded as
 deviations (GAUNTLET experiments keep versioned plans).
 
@@ -63,7 +65,7 @@ explicit denominators (all attempts; valid candidates), with uncertainty only as
 design (independent attempts of one configuration are a sample of that configuration's output
 distribution under these conditions, not of "the model" in general).
 
-## 7. Runbook for the first genuine run (not yet executed)
+## 7. Runbook for the first genuine study (not yet executed)
 
 Readiness as of the latest audit: **blocked** on two prerequisites, neither available on the development
 machine (Windows 11 Home, no administrator rights, no Docker/Podman, no WSL, no Windows Sandbox):
