@@ -25,6 +25,12 @@ controls, and an independent review of the boundary. Then: the pre-registered pr
 under equivalent conditions, and reporting that separates confirmed violations, inconclusive runs and
 infrastructure errors.
 
+*Status.* Not answered. One candidate generated with Gemini has been evaluated once (2026-11-07), inside a
+disconnected VM that served as the isolation boundary, as a demonstration of the pipeline outside the
+protocol: it failed one of six scenarios (S05, `C1_COMPATIBILITY`), and whether it passes the conventional
+suite was not measured ([gemini-attempt2-results.md](gemini-attempt2-results.md)). One attempt on one seed
+says nothing about H3 or about any model; the prerequisites above are still unmet.
+
 ## 3. Stronger oracle validation
 
 *Questions.* Can the oracle accept an incorrect history (false pass) or reject a correct one (false
@@ -67,3 +73,21 @@ cover are listed in [../docs/RESEARCH_DESIGN.md](../docs/RESEARCH_DESIGN.md#rela
 * The v0.3.0 infrastructure error in conventional test CT03 for m2 (a statement that neither completed nor
   waited on a lock until the 20 s step timeout). Its cause is unknown. The supplementary conventional re-run (2026-10-19) had no infrastructure error, which
   neither explains nor rules out the original event.
+
+## Roadmap
+
+None of the following is implemented, and no dates are set. (Moved unchanged from the README.)
+
+1. **Measure instead of demonstrate.** Freeze a protocol (prompts, models, number of attempts, seeds,
+   analysis plan) before collecting data; evaluate many independently generated migrations under identical
+   conditions; report failure rates per invariant with confidence intervals; publish the raw evidence. The
+   protocol draft is [../docs/AGENT_EVALUATION_PROTOCOL.md](../docs/AGENT_EVALUATION_PROTOCOL.md).
+2. **Test the blind-spot claim on external code.** Run the conventional suite on external candidates, so
+   that "passes ordinary tests, fails adversarial runs" can be measured for them too.
+3. **A real isolation boundary.** Implement `strict` mode against a container or VM and test it with
+   deliberately hostile fixtures ([../docs/SECURITY_MODEL.md](../docs/SECURITY_MODEL.md#what-must-exist-before-evaluating-untrusted-ai-generated-code)).
+   Until then, every untrusted candidate needs its own disconnected VM.
+4. **Wider search.** Exploration over more than one interleave directive and over crash points; detection
+   as a function of budget.
+5. **More tasks and independent scenarios.** New task families beyond the one money-column migration, and
+   scenarios and faulty variants written by someone other than the author.

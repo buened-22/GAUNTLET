@@ -119,6 +119,28 @@ Include the version or commit, the platform, steps to reproduce, and the impact 
 single-maintainer research project: you should receive an acknowledgement within 14 days, and response
 times are best effort.
 
+## Known dependency advisory
+
+`backend/constraints.txt` pins `opentelemetry-api` 1.45.1, which is affected by CVE-2026-126360 /
+GHSA-mf5v-w3w3-f6cg (regular-expression denial of service when parsing a crafted `traceparent` value). The
+affected code runs only through FastAPI's built-in telemetry, which is active only when an OpenTelemetry
+provider is configured; GAUNTLET configures none. The pin moves to the fixed version, 1.45.2, in the next
+engineering release. Audit findings and their status are indexed in
+[docs/SECURITY_FINDINGS.md](docs/SECURITY_FINDINGS.md).
+
+## Dependency audit coverage
+
+Dependabot alerts are enabled for this repository, but that does not mean every pinned Python dependency
+is covered. GitHub's dependency graph does not parse `backend/constraints.txt`, the file that pins the exact
+Python package versions used by the tests, continuous integration and the reproduction instructions. An
+advisory affecting one of those pinned packages may therefore produce no Dependabot alert; the
+`opentelemetry-api` advisory above is an example. Audit the pinned Python packages independently, for
+example with [pip-audit](https://pypi.org/project/pip-audit/):
+
+```bash
+pip-audit -r backend/constraints.txt
+```
+
 ## Known limitations that are not new vulnerabilities
 
 Reports that only restate the following are welcome as discussion, but they describe the documented design:

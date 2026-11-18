@@ -1,9 +1,11 @@
 # Results summary
 
 Everything GAUNTLET has measured to date, separated by what was evaluated and by outcome type. Every
-number below comes from a recorded run, and each was rechecked during the v0.4.0 release review
-(2026-10-22). All validation was run by the author on one Windows 11 machine (Python 3.14.0, PostgreSQL
-16.14). None of it has been independently reproduced.
+number below comes from a recorded run. The benchmark and analysis numbers were rechecked during the
+v0.4.0 release review (2026-10-22) on one Windows 11 machine (Python 3.14.0, PostgreSQL 16.14). The one
+evaluation of AI-generated code (2026-11-07) is a later, separate record, made inside a virtual machine
+([gemini-attempt2-results.md](gemini-attempt2-results.md)). All validation was run by the author. None of
+it has been independently reproduced.
 
 ## What was evaluated
 
@@ -12,7 +14,7 @@ number below comes from a recorded run, and each was rechecked during the v0.4.0
 | Hand-written reference implementations | `ref_a_trigger` (trigger synchronisation), `ref_b_dualwrite` (atomic dual-write + post-drain reconciliation) | Yes: frozen benchmarks v0.1.0–v0.3.0, demo |
 | Hand-written single-point mutants | m1–m8, each with a documented intended failure | Yes: frozen benchmarks, demo |
 | **Synthetic external-candidate fixtures** | `synthetic_ref_a_copy`, `synthetic_stale_backfill` (defect injected deliberately), `synthetic_import_canary` (test-only). Manually adapted from the references; **not AI-generated** | Yes, as trusted code in `process` mode with the explicit trust declaration |
-| **Real external AI-generated candidates** | none | **No.** None has been evaluated, because no verified isolation boundary exists |
+| **Real external AI-generated candidates** | one candidate generated with Gemini (attempt 2, `cand-232794272c0fa534`) | **Once, as a demonstration, not a study**: one attempt, one seed, inside a disconnected VM, because GAUNTLET has no verified isolation boundary of its own. It failed one of six scenarios (S05, `C1_COMPATIBILITY`). Record: [gemini-attempt2-results.md](gemini-attempt2-results.md) |
 
 ## Frozen benchmark v0.3.0 (`bench-eed0c47427`, `evidence/results-bench-eed0c47427.sqlite3`)
 
@@ -48,7 +50,8 @@ They are not run-for-run comparable with v0.3.0 (the benchmark version is part o
 | Candidate evaluation | `synthetic_stale_backfill`, S01 + S02, seed 1, vs `ref_a_trigger` | S01 `agreement`; S02 `confirmed_violation` (S1, S7); exploration and minimization as above; experiment report evidence 5/5 unchanged | synthetic fixture, trusted |
 | Fail-closed checks | evaluation without the trust declaration; `--isolation strict` | both **blocked** (exit code 3), no candidate code executed | |
 
-Captured output: [demo-transcript.md](demo-transcript.md).
+Captured output (archived, from the v0.4.0 release review):
+[../docs/archive/research/demo-transcript.md](../docs/archive/research/demo-transcript.md).
 
 ## What these results do and do not establish
 

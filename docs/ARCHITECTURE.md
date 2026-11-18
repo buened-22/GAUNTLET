@@ -75,10 +75,14 @@ API.
      `uncertain` completion.
    * After every step that can release locks, blocked actors are resolved deterministically in
      name order.
+   * The directive vocabulary: `call` / `run` / `run_until(before_write | before_commit | after_commit)`;
+     `crash` / `restart` / `lose_response` / `retry`; `interleave` (seeded random, statement-level),
+     `drain`, `repeat`, `snapshot`. Each step is an event with a logical sequence number.
 5. **Settle.** Any operation still in flight is driven to completion, round-robin. If something
    cannot complete, it is recorded as `uncertain/incomplete` and the run is marked inconclusive.
    A final snapshot is then taken.
-6. **Oracle.** `RunOracle` evaluates the 12 invariants from the ledger and the snapshots.
+6. **Oracle.** `RunOracle` evaluates the 12 invariants (S1–S7, R1–R4 and C1; see
+   [INVARIANTS.md](INVARIANTS.md)) from the ledger and the snapshots.
 7. **Hashes.**
    * `trace_hash`: the event trace with timing and OS identifiers removed.
    * `outcome_hash`: attempt outcomes, invariant statuses and the final rows.
@@ -155,3 +159,34 @@ from the database being tortured, and makes results portable.
   every post-finalize writer writes both columns atomically.
 * *Trade-off.* No database triggers, but correctness rests on the reconciliation pass and the drain
   check. The benchmark shows those are exactly the steps whose omission is caught (m8).
+
+## Repository layout
+
+```
+backend/
+  gauntlet/
+    actor/        child.py (actor subprocess + statement gates), proxy.py (parent handle, lock-wait detection)
+    engine/       controller.py (directives, fault injection), runner.py (one run), observe.py (raw snapshots)
+    impls/        legacy.py (V1), reference_a.py, reference_b.py, mutants.py, registry.py, base.py (contract)
+    oracle/       ledger.py, linearizability.py, checker.py, invariants.py
+    scenarios/    script.py (schedule DSL, seeded workloads), catalog.py (S01–S06)
+    pg/           provision.py (per-run DB, P0 schema), localpg.py (Docker-free PostgreSQL 16)
+    candidates/   external candidates: contract, snapshots, loader, sandbox, guard, evaluate
+    api/          app.py (FastAPI), analyses.py (differential, exploration, minimization, experiments, candidates)
+    differential.py  explore.py  minimize.py  experiment.py  execution.py  schedules.py
+    bench.py  conventional.py  compare.py  report.py  store.py  faults.py  money.py  cli.py
+  tests/          unit tests + PostgreSQL integration tests + API tests; tests/candidates/ synthetic fixtures
+  constraints.txt exact verified dependency versions
+frontend/         React + TypeScript + Vite dashboard
+docs/             documentation (index: docs/README.md); RESULTS*.md are frozen benchmark records;
+                  agent_task/ is the task bundle for a future agent study; archive/ holds working records
+research/         technical report, results summary, the Gemini demonstration record, open questions
+evidence/         frozen benchmark databases with SHA-256 checksums (v0.3.0, plus historical v0.2.0 and
+                  v0.1.0) and the supplementary v0.3.0 conventional re-run record
+audit/            scripts used by the validation audit (see audit/PROVENANCE.md)
+scripts/          run_demo.sh (one-command demonstration), compare_benchmark.py (re-execution vs frozen evidence)
+.github/          continuous-integration workflow
+docker-compose.yml   PostgreSQL 16 service (alternative to the local cluster; used by the Linux CI jobs)
+PROJECT_SPEC.md      full specification + implementation status
+CHANGELOG.md  SECURITY.md  CONTRIBUTING.md  CODE_OF_CONDUCT.md  CITATION.cff  LICENSE  NOTICE
+```

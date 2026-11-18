@@ -131,7 +131,7 @@ Work incrementally through six milestones (inspect and plan; core engine; advers
 
 ---
 
-# Part II: Implementation status (prototype v0.3.0)
+# Part II: Implementation status (software version 0.4.1, benchmark version 0.3.0)
 
 **Version history**
 
@@ -142,7 +142,7 @@ Work incrementally through six milestones (inspect and plan; core engine; advers
   key) and Finding 2 (seeds vary schedule structure in S01, S03, S04 and S05, not only amounts). Benchmark
   `bench-7c4395ec2b` (`docs/RESULTS-v0.2.0.md`, `evidence/results-bench-7c4395ec2b.sqlite3`). The other
   audit findings, including Finding 3 (S1 diagnosis over-attribution), remain open.
-* **v0.3.0 (current).** Two changes:
+* **v0.3.0 (current benchmark version).** Two changes:
   * S04 repeats the completed `expand` a second time, after the backfill has populated `total_cents`, so
     R2 can observe a repeated `expand` that destroys stored values. The earlier repeat runs before any
     data exists.
@@ -158,6 +158,17 @@ Work incrementally through six milestones (inspect and plan; core engine; advers
   later supplementary conventional re-run (`evidence/conventional-rerun-bench-eed0c47427.json`) had no
   infrastructure errors. It is kept as a separate record and does not replace the benchmark's result. See
   `evidence/README-bench-eed0c47427.md`. Audit Finding 3 and the other open findings remain open.
+* **v0.4.0 (software release; benchmark version stays 0.3.0).** Differential testing, bounded schedule
+  exploration, failure minimization, experiment reports with hashed evidence manifests, and the
+  external-candidate pipeline (a `process` development sandbox and a `strict` mode that always fails
+  closed). No scenario, oracle rule, reference, mutant or recorded result changed. See
+  `docs/RELEASE_v0.4.0.md`.
+* **v0.4.1 (software release; benchmark version stays 0.3.0).** Audit hardening: harness-owned actor
+  database connections (A-01), a non-superuser observer role for external candidates (A-02),
+  evidence-based classification of statement timeouts (FR-3), request-origin checks on the local API, and
+  two fixes from a security audit (F-01, F-02); continuous integration on Windows and Linux. A re-execution
+  of the benchmark matched the frozen v0.3.0 evidence in all 180 cells. See `CHANGELOG.md`,
+  `docs/RELEASE_v0.4.1.md` and `docs/SECURITY_FINDINGS.md`.
 
 All validation of every version was run by the author; none has been independently reproduced.
 
@@ -173,7 +184,7 @@ Legend:
 | 3 | V1 / V2 application versions | Done | `impls/legacy.py` (V1, identical for all strategies), V2 in each strategy |
 | 3 | Stages P0–P5 | Done | `stage` directives; every scenario runs P0 to P5 |
 | 3 | PostgreSQL 16 | Done | PostgreSQL 16.14 (portable binaries, `python -m gauntlet pg …`) |
-| 3 | Docker Compose | Partial | `docker-compose.yml` provided; **untested** (no Docker on the development machine) |
+| 3 | Docker Compose | Done (CI only) | `docker-compose.yml`; exercised by the Linux continuous-integration jobs, which start PostgreSQL 16 from it and run the full suite. Not run on the development machine (no Docker there) |
 | 4 | Controlled ordering of events | Done | Statement-level gates in actor subprocesses; single-threaded controller |
 | 4 | Ops: create / update / read / migrate / backfill / interrupt / restart / retry / version switch | Done | Client ops; `expand`, `backfill_batch`, `finalize`, `contract`; `crash`, `restart`, `retry`, `lose_response`; v1/v2 actors and `drain` |
 | 4 | Run record (seed, ids, initial state, trace, requests, ack'd writes, faults, recovery, invariants, errors) | Done | `engine/runner.py` run dict, persisted by `store.py` |
@@ -190,9 +201,9 @@ Legend:
 | 8 | Mutants with intended failures, validated | Done | 8 mutants (`impls/mutants.py`); validation in `bench.py` |
 | 9 | Conventional, adversarial and oracle results distinguished | Done | `conventional.py`, engine trace, oracle results |
 | 9 | Required metrics and reproducibility | Done | `bench.py` → `docs/RESULTS-v0.3.0.md` (current); `docs/RESULTS-v0.2.0.md` (historical v0.2.0); `docs/RESULTS.md` (historical v0.1.0); frozen databases in `evidence/` |
-| 9 | External agent evaluation | Planned | Execution boundary exists (subprocess per actor); no agent solutions collected |
+| 9 | External agent evaluation | Partial | The external-candidate pipeline exists (`gauntlet candidate …`, `docs/CANDIDATES.md`), but no execution mode is a security boundary. One candidate generated with Gemini was evaluated once, inside a disconnected VM, as a demonstration (`research/gemini-attempt2-results.md`). No agent study has been run (`docs/AGENT_EVALUATION_PROTOCOL.md`) |
 | 10 | Dashboard views A–G | Done | `frontend/src/pages/*` |
 | 11 | API endpoints, validation, persistence | Done | `api/app.py`, `store.py` |
-| 11 | No user-supplied code in the main process | Done | Only registered implementations; they run in subprocesses |
+| 11 | No user-supplied code in the main process | Done | Registered implementations and external candidates run only in actor subprocesses. For candidates this is not a security boundary: `process` mode is a development sandbox for trusted code (`SECURITY.md`) |
 | 12 | Automated tests | Done | `backend/tests/` (unit + PostgreSQL integration + API) |
 | 13 | Documentation | Done | this file, `README.md`, `docs/*` |

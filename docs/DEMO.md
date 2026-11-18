@@ -6,12 +6,17 @@ author-run on Windows 11 / Python 3.14 / PostgreSQL 16.14:
 
 * every command was re-run on 2026-11-04 from a clean copy with a freshly installed PostgreSQL, before the
   FR-3 and A-02 commits;
-* at the current commit `2a73551` (2026-11-05), steps 2 (checksums and full suite), 4, 5, 6 and the API
-  evidence check of step 8 were re-run, from `backend/` with the equivalent relative paths; the dashboard
-  (step 7) and the frontend build were not ([../research/demo-readiness-report.md](../research/demo-readiness-report.md)).
+* on 2026-11-05, at `2a73551`, an intermediate build on the private v0.4.1 development branch (before the
+  v0.4.1 release; the identifier cannot be resolved in this repository, see
+  [HISTORY.md](HISTORY.md#development-branch-identifiers-cited-in-the-documentation)), steps 2 (checksums
+  and full suite), 4, 5, 6 and the API evidence check of step 8 were re-run, from `backend/` with the
+  equivalent relative paths; the dashboard
+  (step 7) and the frontend build were not ([archive/research/demo-readiness-report.md](archive/research/demo-readiness-report.md), archived).
 
-For a timed 5-minute presenter walkthrough see [../research/demo-script.md](../research/demo-script.md); for
-security wording see [DEMO_SECURITY_NOTES.md](DEMO_SECURITY_NOTES.md). **`process` isolation is not a security
+The timed 5-minute presenter walkthrough and the presenter security notes written for the v0.4.1
+demonstration are archived: [archive/research/demo-script.md](archive/research/demo-script.md) and
+[archive/docs/DEMO_SECURITY_NOTES.md](archive/docs/DEMO_SECURITY_NOTES.md); the current security description
+is [SECURITY_MODEL.md](SECURITY_MODEL.md). **`process` isolation is not a security
 boundary and `strict` (VM/container) isolation is not implemented: do not run untrusted or AI-generated code
 outside a disconnected, disposable VM.** The one such run so far is recorded in
 [../research/gemini-attempt2-results.md](../research/gemini-attempt2-results.md).

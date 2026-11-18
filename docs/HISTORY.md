@@ -1,13 +1,17 @@
 # Repository history and provenance
 
-The public history of this repository has two commits, one per release:
+This repository's history begins with two release commits, one per release, each a single commit:
 
 | Commit | Tag | Contents |
 |---|---|---|
-| `be9b742` | `v0.4.0` | The v0.4.0 release, 2026-10-22 |
+| `be9b742` | `v0.4.0` | The v0.4.0 release, 2026-10-22 (the first commit of this repository) |
 | the commit tagged `v0.4.1` | `v0.4.1` | The v0.4.1 release: everything developed after v0.4.0, as one commit |
 
-The work behind each release was done elsewhere and its commit-by-commit history is **not** included:
+Any commit made after v0.4.1 follows it in `git log` (`git log v0.4.1..main` lists them) and is not part of
+either release.
+
+The work behind these two releases was done elsewhere and its commit-by-commit history is **not**
+included:
 
 * GAUNTLET v0.1.0 to v0.3.0, and the v0.4.0 changes before that release, were developed in a separate,
   unpublished development repository. This repository starts with the v0.4.0 release commit.
@@ -17,8 +21,16 @@ The work behind each release was done elsewhere and its commit-by-commit history
 Nothing recorded was changed by the move. The frozen evidence (`evidence/`), the historical results
 records (`docs/RESULTS.md`, `docs/RESULTS-v0.2.0.md`, `docs/RESULTS-v0.3.0.md`), the v0.1.0 self-audit
 (`docs/GAUNTLET_VALIDATION_AUDIT.md`) and the audit scripts (`audit/`) are byte-for-byte identical to the
-files in the development repository. Their SHA-256 checksums are in `evidence/*.sha256`. The oracle,
-scenario catalog, references and mutants are also unchanged.
+files in the development repository. The oracle, scenario catalog, references and mutants are also
+unchanged.
+
+What the checksums cover: `evidence/*.sha256` holds the SHA-256 of the three frozen benchmark databases
+(`evidence/results-bench-*.sqlite3`) and of the supplementary conventional re-run record
+(`evidence/conventional-rerun-bench-eed0c47427.json`), and continuous integration verifies them on every
+run. The results records, the self-audit, the audit scripts and the evidence READMEs have **no** checksum
+file. That they have not changed since v0.4.0 can be checked with
+`git diff v0.4.0 v0.4.1 -- docs/RESULTS.md docs/RESULTS-v0.2.0.md docs/RESULTS-v0.3.0.md docs/GAUNTLET_VALIDATION_AUDIT.md audit evidence`,
+which prints nothing; identity with the unpublished development repository cannot be checked from here.
 
 ## Original development-repository identifiers
 

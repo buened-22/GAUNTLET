@@ -15,7 +15,36 @@ or recorded result. The frozen evidence in `evidence/` is byte-for-byte unchange
 
 ## [Unreleased]
 
-Nothing yet.
+Documentation only. No code, test, dependency, configuration, workflow, scenario, oracle rule, reference,
+faulty variant, recorded result or evidence file changed.
+
+### Changed
+
+* The README is shorter and links to new reference documents: [docs/README.md](docs/README.md)
+  (documentation index), [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), [docs/API.md](docs/API.md)
+  (every implemented endpoint), [docs/TESTING.md](docs/TESTING.md) and
+  [docs/RESULTS_OVERVIEW.md](docs/RESULTS_OVERVIEW.md). Their content was moved from the README.
+* The setup instructions install the pinned dependency versions (`-c backend/constraints.txt`) by default.
+* Working records from the v0.4.1 development (the release-readiness audit, the A-02/FR-3 remediation plan,
+  the demonstration notes, script, transcript and rehearsal report) moved unchanged to
+  [docs/archive/](docs/archive/README.md).
+* New [docs/SECURITY_FINDINGS.md](docs/SECURITY_FINDINGS.md): which audit each finding identifier comes from
+  and where its status is recorded, including the two unrelated uses of `F-02`, and the known
+  `opentelemetry-api` advisory.
+
+### Fixed
+
+* `docs/HISTORY.md` said the results records, the v0.1.0 self-audit and the audit scripts had checksums in
+  `evidence/*.sha256`; those files cover only the evidence databases and the conventional re-run record.
+* `research/results-summary.md` said no AI-generated candidate had been evaluated; it now records the one
+  demonstration evaluation of 2026-11-07.
+* `PROJECT_SPEC.md` described the v0.3.0 implementation status as current; it now covers v0.4.0 and v0.4.1.
+* `research/open-questions.md` did not mention the demonstration evaluation.
+
+### Known issues
+
+* `opentelemetry-api` 1.45.1 (CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg) is still pinned; the fix, 1.45.2, is
+  planned for the next engineering release ([docs/SECURITY_FINDINGS.md](docs/SECURITY_FINDINGS.md)).
 
 ## [0.4.1] - 2026-11-16
 
